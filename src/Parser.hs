@@ -112,8 +112,6 @@ parseVar = do
     whiteSpace
     return n
 
---parseDeclarationList :: Parser [CVal]
---parseDeclarationList = do
 
 parseParameterDeclaration :: Parser CVal
 parseParameterDeclaration = do
@@ -149,13 +147,35 @@ parseNumber :: Parser CVal
 parseNumber = liftM (Number . read) $ many1 digit
 
 
-parseProgram :: Parser CVal
+parseProgram :: Parser [CVal]
 parseProgram = do
-    a <- parseNumber
-    comma
-    b <- parseNumber
-    return $ Pair a b
+    p <- parseExternalDeclaration
+    ((++) p <$> (whiteSpace *> parseProgram)) <|> pure p
 
+
+
+parseFunctionDefinition :: Parser [CVal]
+parseFunctionDefinition = do
+    whiteSpace
+    p <- parseDeclaratorList
+    whiteSpace
+    return p
+
+parseExternalDeclaration :: Parser [CVal]
+parseExternalDeclaration = do
+    whiteSpace
+    p <- parseDeclaration
+      <|> parseFunctionDefinition
+    whiteSpace
+    return p
+
+
+
+
+prs :: String -> IO ()
+prs str = print $ case parse parseProgram "TinyC" str of
+    Left err -> show err
+    Right val -> show val
 
 main :: IO ()
 main = do
