@@ -66,6 +66,8 @@ data CVal = Atom String
      | Div CVal CVal
      | Mod CVal CVal
      | Pair CVal CVal
+     | Dclr String
+     | DcLs [String]
 
 showVal :: CVal -> String
 showVal (Atom name) = name
@@ -156,10 +158,20 @@ parseProgram = do
 
 parseFunctionDefinition :: Parser [CVal]
 parseFunctionDefinition = do
-    whiteSpace
-    p <- parseDeclaratorList
-    whiteSpace
-    return p
+    p <- parseNumber
+    ((:) p <$> (whiteSpace *> comma *> whiteSpace *> parseFunctionDefinition)) <|> pure (p : [])
+
+parseParamTypeList :: Parser [CVal]
+parseParamTypeList = do
+    p <- parseParamDeclaration
+    ((:) p <$> (whiteSpace *> comma *> whiteSpace *> parseParamTypeList)) <|> pure (p : [])
+
+parseParamDeclaration :: Parser CVal
+parseParamDeclaration = do
+    char 'i' >> char 'n' >> char 't' >> spaces1
+    p <- parseDeclarator
+    return p    
+
 
 parseExternalDeclaration :: Parser [CVal]
 parseExternalDeclaration = do
