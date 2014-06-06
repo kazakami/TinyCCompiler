@@ -64,41 +64,6 @@ spaces1 = skipMany1 space
 
 
 {--
-data CVal = Atom String
-     | Number Integer
-     | Variation String
-     | Add CVal CVal
-     | Sub CVal CVal
-     | Mul CVal CVal
-     | Div CVal CVal
-     | Mod CVal CVal
-     | Pair CVal CVal
-     | Dclr String
-     | DcLs [String]
-
-showVal :: CVal -> String
-showVal (Atom name) = name
-showVal (Variation name) = name
-showVal (Number n) = show n
-showVal (Add n1 n2) = "(+ " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Sub n1 n2) = "(- " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Mul n1 n2) = "(* " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Div n1 n2) = "(/ " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Mod n1 n2) = "(% " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Pair n1 n2) = "(" ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-
-instance Show CVal where show = showVal
-
-parseExpr :: Parser CVal
-parseExpr = buildExpressionParser table parseFactor
-
-table = [[op "*" Mul AssocLeft, op "/" Div AssocLeft, op "%" Mod AssocLeft]
-          ,[op "+" Add AssocLeft, op "-" Sub AssocLeft]
-          ]
-        where
-          op s f assoc
-             = Infix (do{ string s; return f}) assoc
-
 parseFactor :: Parser CVal
 parseFactor = do
     whiteSpace
@@ -161,8 +126,6 @@ parseProgram = do
     p <- parseExternalDeclaration
     ((++) p <$> (whiteSpace *> parseProgram)) <|> pure p
 
-
-
 parseFunctionDefinition :: Parser [CVal]
 parseFunctionDefinition = do
     p <- parseNumber
@@ -179,7 +142,6 @@ parseParamDeclaration = do
     p <- parseDeclarator
     return p    
 
-
 parseExternalDeclaration :: Parser [CVal]
 parseExternalDeclaration = do
     whiteSpace
@@ -187,7 +149,6 @@ parseExternalDeclaration = do
       <|> parseFunctionDefinition
     whiteSpace
     return p
-
 --}
 
 
@@ -220,6 +181,15 @@ data Expr = Ident String
           | NE Expr Expr
           | And Expr Expr
           | Or Expr Expr
+          | Asgn Expr Expr
+          | Exprssn Expr Expr
+
+data Statement = Non
+               | Solo Expr
+               | If Expr Statement
+               | IfEl Expr Statement Statement
+               | While Expr Statement
+               | Return Expr
 
 showVal :: Expr -> String
 showVal (Number n) = show n -- "(Num " ++ show n ++ ")"
@@ -238,6 +208,8 @@ showVal (NE n1 n2) = "(/= " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (And n1 n2) = "(and " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Or n1 n2) = "(or " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
+showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
+showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 
 
 rightExpr :: Parser Expr
@@ -294,6 +266,26 @@ multExpr = try (do n1 <- unaryExpr
                         q <- unaryExpr
                         return (Mul p q))--}
 --}         
+
+statement :: Parser Statement
+statement =
+    try (do p <- expression
+            _ <- char ';'
+            return (Solo p))
+
+expression :: Parser Expr
+expression = try (do p <- assignExpr
+                     _ <- char ','
+                     q <- expression
+                     return (Exprssn p q))
+               <|> assignExpr
+
+assignExpr :: Parser Expr
+assignExpr = try (do p <- ident
+                     _ <- char '='
+                     q <- assignExpr
+                     return (Asgn p q))
+              <|> rightExpr
 
 primaryExpr :: Parser Expr
 primaryExpr = do

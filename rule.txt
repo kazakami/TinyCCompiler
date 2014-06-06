@@ -45,12 +45,12 @@ declaration-list:	       	[declaration]
 statement-list:			[statement]
 	statement
 	statement-list statement
-
+o
 expression:			[assign-expr]
 	assign-expr
 	expression , assign-expr
-
-assign-expr:			assign-expr
+o
+assign-expr:
 	logical-OR-expr
 	identifier = assign-expr
 o
