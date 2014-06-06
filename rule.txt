@@ -1,6 +1,6 @@
 program:			[externalDeclaration]
 	external-declaration
-	program external-declaration
+	external-declaration program
 
 external-declaration:		externalDeclaration
 	declaration
@@ -11,7 +11,7 @@ declaration:			declaration
 
 declarator-list:		[declarator]
 	declarator
-	declarator-list , declarator
+	declarator-list , declarator-list
 
 declarator:			declarator
 	identifier
@@ -35,7 +35,7 @@ statement:			statement
 	while ( expression ) statement
 	return expression ;
 
-compound-statement:
+compound-statement:		compound
 	{ declaration-list opt statement-list opt }
 
 declaration-list:	       	[declaration]
@@ -46,52 +46,52 @@ statement-list:			[statement]
 	statement
 	statement-list statement
 
-expression:
+expression:			[assign-expr]
 	assign-expr
 	expression , assign-expr
 
-assign-expr:
+assign-expr:			assign-expr
 	logical-OR-expr
 	identifier = assign-expr
-
-logical-OR-expr:
+o
+logical-OR-expr:		
 	logical-AND-expr
 	logical-OR-expr || logical-AND-expr
-
+o
 logical-AND-expr:
 	equality-expr
 	logical-AND-expr && equality-expr
-
+o
 equality-expr:
 	relational-expr
 	equality-expr == relational-expr
 	equality-expr != relational-expr
-
+o
 relational-expr:
 	add-expr
 	relational-expr < add-expr
 	relational-expr > add-expr
 	relational-expr <= add-expr
 	relational-expr >= add-expr
-
+o
 add-expr:
 	mult-expr
 	add-expr + mult-expr
 	add-expr - mult-expr
-
+o
 mult-expr:
 	unary-expr
 	mult-expr * unary-expr
 	mult-expr / unary-expr
-
+o
 unary-expr:
 	postfix-expr
 	- unary-expr
-
+*
 postfix-expr:
 	primary-expr
 	identifier ( argument-expression-list opt )
-
+*
 primary-expr:
 	identifier
 	constant
