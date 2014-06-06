@@ -152,10 +152,12 @@ parseExternalDeclaration = do
 --}
 
 
-prs ::Parser Expr -> String -> IO ()
+prs ::(Show a) => Parser a -> String -> IO ()
 prs parser str = print $ case parse parser "TinyC" str of
     Left err -> show err
     Right val -> show val
+
+
 
 main :: IO ()
 main = do
@@ -183,11 +185,12 @@ data Expr = Ident String
           | Or Expr Expr
           | Asgn Expr Expr
           | Exprssn Expr Expr
+          | Parenthesis Expr
 
 data Statement = Non
                | Solo Expr
                | If Expr Statement
-               | IfEl Expr Statement Statement
+               | IfElse Expr Statement Statement
                | While Expr Statement
                | Return Expr
 
@@ -210,7 +213,15 @@ showVal (Or n1 n2) = "(or " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
+showVal (Parenthesis n) ="( " ++ showVal n ++ " )"
 
+showStatement :: Statement -> String
+showStatement (Non) = "()"
+showStatement (Solo e) = showVal e
+showStatement (If e s) = "(if " ++ showVal e ++ " " ++ showStatement s ++ ")"
+showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
+                                 showStatement s1 ++ " " ++
+                                 showStatement s2 ++ ")"
 
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
@@ -233,6 +244,7 @@ digitList = ['0'..'9']
 
 
 instance Show Expr where show = showVal
+instance Show Statement where show = showStatement
 
 
 pairExpr :: Parser Expr
@@ -269,39 +281,81 @@ multExpr = try (do n1 <- unaryExpr
 
 statement :: Parser Statement
 statement =
-    try (do p <- expression
-            _ <- char ';'
-            return (Solo p))
+    try (do spaces
+            char ';'
+            return (Non))
+     <|> try (do p <- expression
+                 _ <- char ';'
+                 return (Solo p))
+     <|> try (do string "if"
+                 spaces
+                 char '('
+                 spaces
+                 e <- expression
+                 spaces
+                 char ')'
+                 spaces
+                 s1 <- statement
+                 spaces
+                 string "else"
+                 spaces
+                 s2 <- statement
+                 return (IfElse e s1 s2))
+     <|> try (do string "if"
+                 spaces
+                 char '('
+                 spaces
+                 e <- expression
+                 spaces
+                 char ')'
+                 spaces
+                 s <- statement
+                 return (If e s))
 
 expression :: Parser Expr
-expression = try (do p <- assignExpr
+expression = try (do spaces
+                     p <- assignExpr
+                     spaces
                      _ <- char ','
+                     spaces
                      q <- expression
                      return (Exprssn p q))
                <|> assignExpr
 
 assignExpr :: Parser Expr
-assignExpr = try (do p <- ident
+assignExpr = try (do spaces
+                     p <- ident
+                     spaces
                      _ <- char '='
+                     spaces
                      q <- assignExpr
                      return (Asgn p q))
               <|> rightExpr
 
 primaryExpr :: Parser Expr
-primaryExpr = do
-    p <- number
-      <|> ident
-    return p
+primaryExpr =
+    try (do spaces
+            char '('
+            spaces 
+            p <- expression
+            char ')'
+            spaces
+            return (Parenthesis p))
+     <|> number
+     <|> ident
 
 ident :: Parser Expr
-ident = do p <- identifier
+ident = do spaces
+           p <- identifier
            return $ Ident p
 
 number :: Parser Expr
 number = liftM (Number . read) $ many1 digit
 
 num :: Parser Expr
-num = do c <- oneOf digitList
+num = do spaces
+         c <- oneOf digitList
+         spaces
          return . Number $ charToInt c
       where
          charToInt c = toInteger (ord c - ord '0')
@@ -313,7 +367,9 @@ postfixExpr = do
 
 unaryExpr :: Parser Expr
 unaryExpr = postfixExpr
-             <|> do  _ <- char '-'
+             <|> do  spaces
+                     _ <- char '-'
+                     spaces
                      p <- unaryExpr
                      return $ Minus p
 
