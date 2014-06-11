@@ -25,7 +25,7 @@ parameter-type-list:   	 	[parameter-declaration]
 
 parameter-declaration:		prameter-declaration
 	int declarator
-
+*
 statement:			statement
 	;
 	expression ;
@@ -41,12 +41,12 @@ compound-statement:		compound
 declaration-list:	       	[declaration]
 	declaration
 	declaration-list declaration
-
+o
 statement-list:			[statement]
 	statement
 	statement-list statement
 o
-expression:			[assign-expr]
+expression:
 	assign-expr
 	expression , assign-expr
 o
@@ -91,7 +91,7 @@ unary-expr:
 postfix-expr:
 	primary-expr
 	identifier ( argument-expression-list opt )
-*
+o
 primary-expr:
 	identifier
 	constant

@@ -193,6 +193,7 @@ data Statement = Non
                | IfElse Expr Statement Statement
                | While Expr Statement
                | Return Expr
+               | SttList Statement Statement
 
 showVal :: Expr -> String
 showVal (Number n) = show n -- "(Num " ++ show n ++ ")"
@@ -213,7 +214,7 @@ showVal (Or n1 n2) = "(or " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Parenthesis n) ="( " ++ showVal n ++ " )"
+showVal (Parenthesis n) = showVal n
 
 showStatement :: Statement -> String
 showStatement (Non) = "()"
@@ -222,6 +223,11 @@ showStatement (If e s) = "(if " ++ showVal e ++ " " ++ showStatement s ++ ")"
 showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
                                  showStatement s1 ++ " " ++
                                  showStatement s2 ++ ")"
+showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
+                            showStatement s ++ ")"
+showStatement (Return e) = "(return " ++ showVal e ++ ")"
+showStatement (SttList s1 s2) = "(SttList " ++ showStatement s1 ++
+                                " " ++ showStatement s2 ++ ")"
 
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
@@ -279,12 +285,22 @@ multExpr = try (do n1 <- unaryExpr
                         return (Mul p q))--}
 --}         
 
+statementList :: Parser Statement
+statementList = try (do spaces
+                        p <- statement
+                        spaces
+                        q <- statementList
+                        return (SttList p q))
+                 <|> statement
+
+
 statement :: Parser Statement
 statement =
     try (do spaces
             char ';'
             return (Non))
      <|> try (do p <- expression
+                 spaces
                  _ <- char ';'
                  return (Solo p))
      <|> try (do string "if"
@@ -311,6 +327,22 @@ statement =
                  spaces
                  s <- statement
                  return (If e s))
+     <|> try (do string "while"
+                 spaces
+                 char '('
+                 spaces
+                 e <- expression
+                 spaces
+                 char ')'
+                 spaces
+                 s <- statement
+                 return (While e s))
+     <|> try (do string "return"
+                 spaces
+                 e <- expression
+                 spaces
+                 char ';'
+                 return (Return e))
 
 expression :: Parser Expr
 expression = try (do spaces
