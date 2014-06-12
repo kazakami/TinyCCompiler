@@ -62,96 +62,6 @@ spaces1 = skipMany1 space
 
 
 
-
-{--
-parseFactor :: Parser CVal
-parseFactor = do
-    whiteSpace
-    f <- parens parseExpr
-         <|> parseVar
-    whiteSpace
-    return f
-
-parseStatement :: Parser CVal
-parseStatement = do
-    exp <- parseExpr
-    whiteSpace >> semi
-    return exp
-
-parseVar :: Parser CVal
-parseVar = do
-    whiteSpace
-    n <- parseNumber
-         <|> parseDeclarator
-    whiteSpace
-    return n
-
-
-parseParameterDeclaration :: Parser CVal
-parseParameterDeclaration = do
-    whiteSpace
-    char 'i' >> char 'n' >> char 't' >> spaces1
-    p <- parseDeclarator
-    return p
-
-parseDeclarationList :: Parser [CVal]
-parseDeclarationList = do
-    d <- parseDeclaration
-    ((++) d <$> (whiteSpace *> parseDeclarationList)) <|> pure d
-    
-parseDeclaration :: Parser [CVal]
-parseDeclaration = do
-    char 'i' >> char 'n' >> char 't'
-    spaces1
-    pl <- parseDeclaratorList
-    whiteSpace >> semi
-    return pl
-    
-parseDeclarator :: Parser CVal
-parseDeclarator = do
-    v <- identifier
-    return $ Variation v
-
-parseDeclaratorList :: Parser [CVal]
-parseDeclaratorList = do
-    p <- parseDeclarator
-    ((:) p <$> (whiteSpace *> comma *> whiteSpace *> parseDeclaratorList)) <|> pure (p : [])
-
-parseNumber :: Parser CVal
-parseNumber = liftM (Number . read) $ many1 digit
-
-
-parseProgram :: Parser [CVal]
-parseProgram = do
-    p <- parseExternalDeclaration
-    ((++) p <$> (whiteSpace *> parseProgram)) <|> pure p
-
-parseFunctionDefinition :: Parser [CVal]
-parseFunctionDefinition = do
-    p <- parseNumber
-    ((:) p <$> (whiteSpace *> comma *> whiteSpace *> parseFunctionDefinition)) <|> pure (p : [])
-
-parseParamTypeList :: Parser [CVal]
-parseParamTypeList = do
-    p <- parseParamDeclaration
-    ((:) p <$> (whiteSpace *> comma *> whiteSpace *> parseParamTypeList)) <|> pure (p : [])
-
-parseParamDeclaration :: Parser CVal
-parseParamDeclaration = do
-    char 'i' >> char 'n' >> char 't' >> spaces1
-    p <- parseDeclarator
-    return p    
-
-parseExternalDeclaration :: Parser [CVal]
-parseExternalDeclaration = do
-    whiteSpace
-    p <- parseDeclaration
-      <|> parseFunctionDefinition
-    whiteSpace
-    return p
---}
-
-
 prs ::(Show a) => Parser a -> String -> IO ()
 prs parser str = print $ case parse parser "TinyC" str of
     Left err -> show err
@@ -169,9 +79,11 @@ main = do
 
 data Expr = Ident String
           | Declarator String
-          | DeclaratorList Expr Expr
+          | DeclaratorList [Expr]
           | Declaration Expr
-          | DeclarationList Expr Expr
+          | DeclarationList [Expr]
+          | ParamDclr Expr
+          | ParamDclrList [Expr]
           | Number Integer
           | Minus Expr
           | Mul Expr Expr
@@ -190,6 +102,9 @@ data Expr = Ident String
           | Asgn Expr Expr
           | Exprssn Expr Expr
           | Parenthesis Expr
+          | ArguExprList [Expr]
+          | PostfixExpr Expr Expr
+          | ExprList [Expr]
 
 data Statement = Non
                | Solo Expr
@@ -197,7 +112,7 @@ data Statement = Non
                | IfElse Expr Statement Statement
                | While Expr Statement
                | Return Expr
-               | SttList Statement Statement
+               | SttList [Statement]
 
 showVal :: Expr -> String
 showVal (Number n) = show n -- "(Num " ++ show n ++ ")"
@@ -220,11 +135,17 @@ showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Parenthesis n) = showVal n
 showVal (Declarator s) = s
-showVal (DeclaratorList n1 n2) = "(DcLst " ++ showVal n1 ++ " " ++
-                                 showVal n2 ++ ")"
+showVal (DeclaratorList l) = "(DeclaratorList " ++  (unwords $ map showVal l) ++ ")"
 showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
-showVal (DeclarationList n1 n2) = "(DecList " ++ showVal n1 ++ " " ++
-                                  showVal n2 ++ ")"
+showVal (DeclarationList l) = "(DeclarationList " ++  (unwords $ map showVal l) ++ ")"
+showVal (ParamDclr n) = "(ParamDclr " ++ showVal n ++ ")"
+showVal (ParamDclrList l) = "(ParamDclrList " ++  (unwords $ map showVal l) ++ ")"
+showVal (ArguExprList l) = "(ArguExprList " ++  (unwords $ map showVal l) ++ ")"
+showVal (PostfixExpr n1 n2) = "(PostfixExpr " ++ showVal n1 ++ " " ++
+                                showVal n2 ++ ")"
+showVal (ExprList l) = "(List " ++  (unwords $ map showVal l) ++ ")"
+
+
 
 showStatement :: Statement -> String
 showStatement (Non) = "()"
@@ -236,8 +157,7 @@ showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
 showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
                             showStatement s ++ ")"
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
-showStatement (SttList s1 s2) = "(SttList " ++ showStatement s1 ++
-                                " " ++ showStatement s2 ++ ")"
+showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
 
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
@@ -269,6 +189,30 @@ pairExpr = do n1 <- unaryExpr
               n2 <- unaryExpr
               return $ Pair n1 n2
 
+paramDeclaration :: Parser Expr
+paramDeclaration = do spaces
+                      string "int"
+                      spaces1
+                      p <- declarator
+                      return $ ParamDclr p
+{--
+paramDeclarationList :: Parser Expr
+paramDeclarationList =  try (do spaces
+                                p <- paramDeclaration
+                                spaces
+                                char ','
+                                spaces
+                                q <- paramDeclarationList
+                                return (ParamDclrList p q))
+                         <|> paramDeclaration
+--}
+
+paramDeclarationList :: Parser Expr
+paramDeclarationList = do  p <- sepBy paramDeclaration $ spaces >> char ',' >> spaces
+                           return $  ParamDclrList p
+
+
+{--
 declarationList :: Parser Expr
 declarationList = try (do spaces
                           p <- declaration
@@ -276,11 +220,15 @@ declarationList = try (do spaces
                           q <- declarationList
                           return (DeclarationList p q))
                    <|> declaration
+--}
+
+declarationList :: Parser Expr
+declarationList = do  p <- sepBy declaration $ spaces
+                      return $  DeclarationList p
 
 declaration :: Parser Expr
 declaration = do string "int"
-                 _ <- string " "
-                 spaces
+                 spaces1
                  p <- declaratorList
                  spaces
                  _ <- string ";"
@@ -290,6 +238,7 @@ declarator :: Parser Expr
 declarator = do p <- identifier
                 return $ Declarator p
 
+{--
 declaratorList :: Parser Expr
 declaratorList = try (do spaces
                          p <- declarator
@@ -299,8 +248,11 @@ declaratorList = try (do spaces
                          q <- declaratorList
                          return (DeclaratorList p q))
                  <|> declarator
-                         
-
+--}
+declaratorList :: Parser Expr
+declaratorList = do  p <- sepBy declarator $ spaces >> char ',' >> spaces
+                     return $  ExprList p
+{--
 statementList :: Parser Statement
 statementList = try (do spaces
                         p <- statement
@@ -308,7 +260,10 @@ statementList = try (do spaces
                         q <- statementList
                         return (SttList p q))
                  <|> statement
-
+--}
+statementList :: Parser Statement
+statementList = do p <- sepBy statement $ spaces
+                   return $ SttList p
 
 statement :: Parser Statement
 statement =
@@ -409,9 +364,18 @@ num = do spaces
          charToInt c = toInteger (ord c - ord '0')
 
 postfixExpr :: Parser Expr
-postfixExpr = do 
-    p <- primaryExpr
-    return p
+postfixExpr = try (do spaces
+                      p <- ident
+                      spaces
+                      char '('
+                      spaces
+                      q <- arguExprList
+                      spaces
+                      char ')'
+                      return (PostfixExpr p q))
+                <|>  try (do spaces
+                             p <- primaryExpr
+                             return p)
 
 unaryExpr :: Parser Expr
 unaryExpr = postfixExpr
@@ -420,8 +384,20 @@ unaryExpr = postfixExpr
                      spaces
                      p <- unaryExpr
                      return $ Minus p
-
-
+{--
+arguExprList :: Parser Expr
+arguExprList =  try (do spaces
+                        p <- assignExpr
+                        spaces
+                        _ <- char ','
+                        spaces
+                        q <- arguExprList
+                        return (ArguExprList p q))
+                 <|> assignExpr
+--}
+arguExprList :: Parser Expr
+arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
+                  return $ ArguExprList p
 
 
 

@@ -18,7 +18,7 @@ declarator:
 
 function-definition:		function
 	int declarator ( parameter-type-list opt ) compound-statement
-
+o
 parameter-type-list:   	 	[parameter-declaration]
 	parameter-declaration
 	parameter-type-list , parameter-declaration
@@ -87,7 +87,7 @@ o
 unary-expr:
 	postfix-expr
 	- unary-expr
-*
+o
 postfix-expr:
 	primary-expr
 	identifier ( argument-expression-list opt )
@@ -96,7 +96,7 @@ primary-expr:
 	identifier
 	constant
 	( expression )
-
+o
 argument-expression-list:
 	assign-expr
-	argument-expression-list , assign-expr
+	assign-expr , argument-expression-list
