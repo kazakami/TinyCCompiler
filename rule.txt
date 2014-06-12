@@ -5,15 +5,15 @@ program:			[externalDeclaration]
 external-declaration:		externalDeclaration
 	declaration
 	function-definition
-
-declaration:			declaration
+o
+declaration:
 	int declarator-list ;
-
-declarator-list:		[declarator]
+o
+declarator-list:
 	declarator
-	declarator-list , declarator-list
-
-declarator:			declarator
+	declarator , declarator-list
+o
+declarator:
 	identifier
 
 function-definition:		function
@@ -22,8 +22,8 @@ function-definition:		function
 parameter-type-list:   	 	[parameter-declaration]
 	parameter-declaration
 	parameter-type-list , parameter-declaration
-
-parameter-declaration:		prameter-declaration
+o
+parameter-declaration:
 	int declarator
 *
 statement:			statement
@@ -37,12 +37,12 @@ statement:			statement
 
 compound-statement:		compound
 	{ declaration-list opt statement-list opt }
-
-declaration-list:	       	[declaration]
-	declaration
-	declaration-list declaration
 o
-statement-list:			[statement]
+declaration-list:
+	declaration
+	declaration declaration-list
+o
+statement-list:			statement
 	statement
 	statement-list statement
 o

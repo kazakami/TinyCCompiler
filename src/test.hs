@@ -168,6 +168,10 @@ main = do
 
 
 data Expr = Ident String
+          | Declarator String
+          | DeclaratorList Expr Expr
+          | Declaration Expr
+          | DeclarationList Expr Expr
           | Number Integer
           | Minus Expr
           | Mul Expr Expr
@@ -215,10 +219,16 @@ showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Parenthesis n) = showVal n
+showVal (Declarator s) = s
+showVal (DeclaratorList n1 n2) = "(DcLst " ++ showVal n1 ++ " " ++
+                                 showVal n2 ++ ")"
+showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
+showVal (DeclarationList n1 n2) = "(DecList " ++ showVal n1 ++ " " ++
+                                  showVal n2 ++ ")"
 
 showStatement :: Statement -> String
 showStatement (Non) = "()"
-showStatement (Solo e) = showVal e
+showStatement (Solo e) = "(Stt " ++ showVal e ++ ")"
 showStatement (If e s) = "(if " ++ showVal e ++ " " ++ showStatement s ++ ")"
 showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
                                  showStatement s1 ++ " " ++
@@ -258,32 +268,38 @@ pairExpr = do n1 <- unaryExpr
               _ <- char '*'
               n2 <- unaryExpr
               return $ Pair n1 n2
-{--
-addExpr :: Parser Expr
-addExpr = try (do n1 <- multExpr
-                  _ <- char '+'
-                  n2 <- addExpr
-                  return (Add n1 n2))
-             <|> multExpr
 
-multExpr :: Parser Expr
-{--multExpr = do unaryExpr
-            <|> do n1 <- multExpr
-                   _ <- char '*'
-                   n2 <- unaryExpr
-                   return $ Mul n1 n2--}
+declarationList :: Parser Expr
+declarationList = try (do spaces
+                          p <- declaration
+                          spaces
+                          q <- declarationList
+                          return (DeclarationList p q))
+                   <|> declaration
 
-multExpr = try (do n1 <- unaryExpr
-                   _ <- char '*'
-                   n2 <- multExpr
-                   return (Mul n1 n2))
-             <|> unaryExpr
-{--multExpr = unaryExpr
-            <|> try (do p <- multExpr
-                        _ <- char '*'
-                        q <- unaryExpr
-                        return (Mul p q))--}
---}         
+declaration :: Parser Expr
+declaration = do string "int"
+                 _ <- string " "
+                 spaces
+                 p <- declaratorList
+                 spaces
+                 _ <- string ";"
+                 return $ Declaration p
+
+declarator :: Parser Expr
+declarator = do p <- identifier
+                return $ Declarator p
+
+declaratorList :: Parser Expr
+declaratorList = try (do spaces
+                         p <- declarator
+                         spaces
+                         _ <- char ','
+                         spaces
+                         q <- declaratorList
+                         return (DeclaratorList p q))
+                 <|> declarator
+                         
 
 statementList :: Parser Statement
 statementList = try (do spaces
