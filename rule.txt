@@ -1,33 +1,31 @@
-o
-program:			[externalDeclaration]
+program:
 	external-declaration
 	external-declaration program
-o
-external-declaration:		ExternalDeclaration
+
+external-declaration:
 	declaration
 	function-definition
-o
+
 declaration:
 	int declarator-list ;
-o
+
 declarator-list:
-	declarator
-	declarator , declarator-list
-o
+	(declarator ( , declarator)*)?
+
 declarator:
 	identifier
-o
-function-definition:		FuncDef
+
+function-definition:
 	int declarator ( parameter-type-list opt ) compound-statement
-o
+
 parameter-type-list:
 	parameter-declaration
 	parameter-type-list , parameter-declaration
-o
+
 parameter-declaration:
 	int declarator
-o
-statement:			Statement
+
+statement:
 	;
 	expression ;
 	compound-statement
@@ -35,69 +33,66 @@ statement:			Statement
 	if ( expression ) statement else statement
 	while ( expression ) statement
 	return expression ;
-o
+
 compound-statement:
-	{ declaration-list opt statement-list opt }
-o
+	{ declaration-list statement-list }
+
 declaration-list:
-	declaration
-	declaration declaration-list
-o
-statement-list:			statement
-	statement
-	statement-list statement
-o
+	(declaration ( declaration)*)?
+
+statement-list:
+	(statement ( statement)*)?
+
 expression:
 	assign-expr
 	expression , assign-expr
-o
+
 assign-expr:
 	logical-OR-expr
 	identifier = assign-expr
-o
+
 logical-OR-expr:		
 	logical-AND-expr
 	logical-OR-expr || logical-AND-expr
-o
+
 logical-AND-expr:
 	equality-expr
 	logical-AND-expr && equality-expr
-o
+
 equality-expr:
 	relational-expr
 	equality-expr == relational-expr
 	equality-expr != relational-expr
-o
+
 relational-expr:
 	add-expr
 	relational-expr < add-expr
 	relational-expr > add-expr
 	relational-expr <= add-expr
 	relational-expr >= add-expr
-o
+
 add-expr:
 	mult-expr
 	add-expr + mult-expr
 	add-expr - mult-expr
-o
+
 mult-expr:
 	unary-expr
 	mult-expr * unary-expr
 	mult-expr / unary-expr
-o
+
 unary-expr:
 	postfix-expr
 	- unary-expr
-o
+
 postfix-expr:
 	primary-expr
-	identifier ( argument-expression-list opt )
-o
+	identifier ( argument-expression-list )
+
 primary-expr:
 	identifier
 	constant
 	( expression )
-o
+
 argument-expression-list:
-	assign-expr
-	assign-expr , argument-expression-list
+	(assign-expr ( , assign-expr)*)?
