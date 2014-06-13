@@ -1,8 +1,9 @@
+o
 program:			[externalDeclaration]
 	external-declaration
 	external-declaration program
-
-external-declaration:		externalDeclaration
+o
+external-declaration:		ExternalDeclaration
 	declaration
 	function-definition
 o
@@ -15,18 +16,18 @@ declarator-list:
 o
 declarator:
 	identifier
-
-function-definition:		function
+o
+function-definition:		FuncDef
 	int declarator ( parameter-type-list opt ) compound-statement
 o
-parameter-type-list:   	 	[parameter-declaration]
+parameter-type-list:
 	parameter-declaration
 	parameter-type-list , parameter-declaration
 o
 parameter-declaration:
 	int declarator
-*
-statement:			statement
+o
+statement:			Statement
 	;
 	expression ;
 	compound-statement
@@ -34,8 +35,8 @@ statement:			statement
 	if ( expression ) statement else statement
 	while ( expression ) statement
 	return expression ;
-
-compound-statement:		compound
+o
+compound-statement:
 	{ declaration-list opt statement-list opt }
 o
 declaration-list:

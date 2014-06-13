@@ -113,6 +113,13 @@ data Statement = Non
                | While Expr Statement
                | Return Expr
                | SttList [Statement]
+               | ConpoundStt Expr Statement
+
+data FuncDef = FuncDefinition Expr Expr Statement
+data ExternDclr = ExternDeclaration Expr
+                | ExternFuncDec FuncDef
+                | Program [ExternDclr]
+
 
 showVal :: Expr -> String
 showVal (Number n) = show n -- "(Num " ++ show n ++ ")"
@@ -135,14 +142,19 @@ showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Parenthesis n) = showVal n
 showVal (Declarator s) = s
+showVal (DeclaratorList []) = "(DeclaratorList nil)"
 showVal (DeclaratorList l) = "(DeclaratorList " ++  (unwords $ map showVal l) ++ ")"
 showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
+showVal (DeclarationList []) = "(DeclarationList nil)"
 showVal (DeclarationList l) = "(DeclarationList " ++  (unwords $ map showVal l) ++ ")"
 showVal (ParamDclr n) = "(ParamDclr " ++ showVal n ++ ")"
+showVal (ParamDclrList []) = "(ParamDclrList nil)"
 showVal (ParamDclrList l) = "(ParamDclrList " ++  (unwords $ map showVal l) ++ ")"
+showVal (ArguExprList []) = "(ArguExprList nil)"
 showVal (ArguExprList l) = "(ArguExprList " ++  (unwords $ map showVal l) ++ ")"
-showVal (PostfixExpr n1 n2) = "(PostfixExpr " ++ showVal n1 ++ " " ++
+showVal (PostfixExpr n1 n2) = "(CallFunc " ++ showVal n1 ++ " " ++
                                 showVal n2 ++ ")"
+showVal (ExprList []) = "(List nil)"
 showVal (ExprList l) = "(List " ++  (unwords $ map showVal l) ++ ")"
 
 
@@ -157,7 +169,24 @@ showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
 showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
                             showStatement s ++ ")"
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
+showStatement (SttList []) = "(SttList nil)"
 showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
+showStatement (ConpoundStt e s) = "(ConpoundStt " ++ showVal e ++ " " ++ showStatement s ++ ")"
+
+
+
+showFuncDef :: FuncDef -> String
+showFuncDef (FuncDefinition e1 e2 s) = "(define (int " ++ showVal e1 ++ ")(" ++ showVal e2 ++ ")" ++
+                                       showStatement s ++ ")"
+
+
+
+showExternDclr :: ExternDclr -> String
+showExternDclr (ExternDeclaration e) = showVal e
+showExternDclr (ExternFuncDec f) = showFuncDef f
+showExternDclr (Program []) = "(Program nil)"
+showExternDclr (Program l) = "(Program " ++ (unwords $ map showExternDclr l) ++ ")"
+
 
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
@@ -181,6 +210,8 @@ digitList = ['0'..'9']
 
 instance Show Expr where show = showVal
 instance Show Statement where show = showStatement
+instance Show FuncDef where show = showFuncDef
+instance Show ExternDclr where show = showExternDclr
 
 
 pairExpr :: Parser Expr
@@ -188,6 +219,35 @@ pairExpr = do n1 <- unaryExpr
               _ <- char '*'
               n2 <- unaryExpr
               return $ Pair n1 n2
+
+
+program :: Parser ExternDclr
+program = do p <- sepBy externDeclaration spaces
+             return $ Program p
+
+externDeclaration :: Parser ExternDclr
+externDeclaration = try (do spaces
+                            p <- declaration
+                            return (ExternDeclaration p))
+                     <|> try (do spaces
+                                 p <- funcDef
+                                 return (ExternFuncDec p))
+
+funcDef :: Parser FuncDef
+funcDef = do spaces
+             string "int"
+             spaces1
+             p <- declarator
+             spaces
+             char '('
+             spaces
+             q <- paramDeclarationList
+             spaces
+             char ')'
+             spaces
+             s <- conpoundStatement
+             return $ FuncDefinition p q s
+             
 
 paramDeclaration :: Parser Expr
 paramDeclaration = do spaces
@@ -223,7 +283,7 @@ declarationList = try (do spaces
 --}
 
 declarationList :: Parser Expr
-declarationList = do  p <- sepBy declaration $ spaces
+declarationList = do  p <- sepBy declaration spaces
                       return $  DeclarationList p
 
 declaration :: Parser Expr
@@ -251,7 +311,7 @@ declaratorList = try (do spaces
 --}
 declaratorList :: Parser Expr
 declaratorList = do  p <- sepBy declarator $ spaces >> char ',' >> spaces
-                     return $  ExprList p
+                     return $  DeclaratorList p
 {--
 statementList :: Parser Statement
 statementList = try (do spaces
@@ -262,7 +322,7 @@ statementList = try (do spaces
                  <|> statement
 --}
 statementList :: Parser Statement
-statementList = do p <- sepBy statement $ spaces
+statementList = do p <- sepBy statement spaces
                    return $ SttList p
 
 statement :: Parser Statement
@@ -314,6 +374,9 @@ statement =
                  spaces
                  char ';'
                  return (Return e))
+     <|> try (do spaces
+                 p <- conpoundStatement
+                 return p)
 
 expression :: Parser Expr
 expression = try (do spaces
@@ -398,6 +461,17 @@ arguExprList =  try (do spaces
 arguExprList :: Parser Expr
 arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
                   return $ ArguExprList p
+
+conpoundStatement :: Parser Statement
+conpoundStatement = do spaces
+                       char '{'
+                       spaces
+                       p <- declaratorList
+                       spaces
+                       q <- statementList
+                       spaces
+                       char '}'
+                       return $ ConpoundStt p q
 
 
 
