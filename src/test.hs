@@ -10,6 +10,7 @@ import qualified Text.ParserCombinators.Parsec.Token as Token
 import Text.ParserCombinators.Parsec.Language
 import GHC.IO.Handle
 import System.IO
+import Data.Maybe
 import Data.Char (ord)
 
 tinyCStyle = emptyDef {
@@ -66,6 +67,8 @@ prs parser str = case parse parser "TinyC" str of
 putPrs :: (Show a) => Parser a -> String -> IO ()
 putPrs parser str = putStr $ prs parser str
 
+
+
 main :: IO ()
 main = do
    input <- getLine
@@ -107,7 +110,7 @@ data Statement = Non
                | While Expr Statement
                | Return Expr
                | SttList [Statement]
-               | ConpoundStt Expr Statement
+               | CompoundStt Expr Statement
 
 data FuncDef = FuncDefinition Expr Expr Statement
 data ExternDclr = ExternDeclaration Expr
@@ -134,7 +137,7 @@ showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Parenthesis n) = showVal n
-showVal (Declarator s) = s ++ "d"
+showVal (Declarator s) = s
 showVal (DeclaratorList []) = ""--"(DeclaratorList nil)"
 showVal (DeclaratorList l) = "(DeclaratorList " ++  (unwords $ map showVal l) ++ ")"
 showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
@@ -162,7 +165,7 @@ showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
 showStatement (SttList []) = "(SttList nil)"
 showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
-showStatement (ConpoundStt e s) = "(ConpoundStt " ++ showVal e ++ " " ++
+showStatement (CompoundStt e s) = "(CompoundStt " ++ showVal e ++ " " ++
                                   showStatement s ++ ")"
 
 showFuncDef :: FuncDef -> String
@@ -229,7 +232,7 @@ funcDef = do spaces
              spaces
              char ')'
              spaces
-             s <- conpoundStatement
+             s <- compoundStatement
              return $ FuncDefinition p q s
 
 paramDeclaration :: Parser Expr
@@ -240,19 +243,21 @@ paramDeclaration = do spaces
                       return $ ParamDclr p
 
 paramDeclarationList :: Parser Expr
-paramDeclarationList = do  p <- sepBy paramDeclaration $ spaces >> char ',' >> spaces
-                           return $  ParamDclrList p
+paramDeclarationList = do p <- sepBy paramDeclaration $ spaces >> char ',' >> spaces
+                          return $  ParamDclrList p
 
 declarationList :: Parser Expr
 declarationList = do  p <- sepBy declaration spaces
                       return $  DeclarationList p
 
 declaration :: Parser Expr
-declaration = do string "int"
+declaration = do spaces
+                 string "int"
                  spaces1
                  p <- declaratorList
                  spaces
                  _ <- string ";"
+                 spaces
                  return $ Declaration p
 
 declarator :: Parser Expr
@@ -323,7 +328,7 @@ statement =
                  spaces
                  return (Return e))
      <|> try (do spaces
-                 p <- conpoundStatement
+                 p <- compoundStatement
                  spaces
                  return p)
 
@@ -401,24 +406,108 @@ arguExprList :: Parser Expr
 arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
                   return $ ArguExprList p
 
-conpoundStatement :: Parser Statement
-conpoundStatement = do spaces
+compoundStatement :: Parser Statement
+compoundStatement = do spaces
                        char '{'
                        spaces
-                       p <- declaratorList
+                       p <- declarationList
                        spaces
                        q <- statementList
                        spaces
                        char '}'
-                       return $ ConpoundStt p q
+                       return $ CompoundStt p q
 
+
+
+prsProgram :: String -> IO ()
+prsProgram str = case parse program "TinyC" str of
+    Left err -> putStrLn $ show err
+    Right val -> case checkTreeDuplication val of
+        Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
+        Nothing -> putStrLn $ show val --putStrLn . unwords . extractName $ val
 
 
 --checkTree :: ExternDclr -> Bool
 --checkTree (Program l) = 
-extractName :: ExternDclr -> String
-extractName (ExternDeclaration (DeclaratorList e)) = unwords $ map showVal e
-extractName (ExternFuncDec f) = showFuncDef f
+
+
+checkTreeDuplication :: ExternDclr -> Maybe [String]
+checkTreeDuplication (Program l) =
+    case duplication . extractName $ Program l of
+        Just a -> Just a
+        Nothing -> foldr maybeCouple Nothing $ map checkTreeDuplication l
+checkTreeDuplication (ExternFuncDec (FuncDefinition e1 e2 s)) =
+    case duplication . extractAllDclrFromFunc $ FuncDefinition e1 e2 s of
+        Just a -> Just a
+        Nothing -> checkSttDuplication s
+checkTreeDuplication _ = Nothing
+
+
+checkSttDuplication :: Statement -> Maybe [String]
+checkSttDuplication (CompoundStt e s) =
+    maybeCouple (duplication . extractDclrFromStt $ CompoundStt e s) $ checkSttDuplication s
+checkSttDuplication (If e s) = checkSttDuplication s
+checkSttDuplication (IfElse e s1 s2) =
+    maybeCouple (duplication $ extractDclrFromStt s1)
+    . duplication . extractDclrFromStt $ s2
+checkSttDuplication (While e s) = checkSttDuplication s
+checkSttDuplication (SttList l) =
+    foldr maybeCouple Nothing $ map checkSttDuplication l
+checkSttDuplication _ = Nothing
+
+
+extractParamDclrFromFunc :: FuncDef -> [String]
+extractParamDclrFromFunc (FuncDefinition e1 (ParamDclrList l) s) =
+    map extractNameFromExpr l ++ extractDclrFromStt s
+extractParamDclrFromFunc _ = []
+
+
+
+extractAllDclrFromFunc :: FuncDef -> [String]
+extractAllDclrFromFunc (FuncDefinition e1 e2 s) =
+    extractParamDclrFromFunc $ FuncDefinition e1 e2 s
+
+
+extractDclrFromStt :: Statement -> [String]
+extractDclrFromStt (CompoundStt (DeclarationList l) s) =
+    foldr (++) [] $ map showList l
+    where showList :: Expr -> [String]
+          showList (Declaration (DeclaratorList l)) = map showStr l
+          showList _ = []
+          showStr :: Expr -> String
+          showStr (Declarator s) = s
+          showStr _ = ""
+extractDclrFromStt _ = []
+
+extractName :: ExternDclr -> [String]
+extractName (ExternDeclaration (Declaration (DeclaratorList l))) =
+    map showVal l
+extractName (ExternFuncDec (FuncDefinition e1 e2 e3)) = [showVal e1]
+extractName (Program l)  = foldr (++) [] $ map extractName l
+extractName _ = []
+
+
+extractNameFromExpr :: Expr -> String
+extractNameFromExpr (ParamDclr e) = showVal e
+extractNameFromExpr _ = []
+    
+extractNameFromCompound _ = []
+
+maybeCouple ::Eq a => Maybe [a] -> Maybe [a] -> Maybe [a]
+maybeCouple x y = if l == [] then Nothing else Just l
+    where p = fromMaybe [] x
+          q = fromMaybe [] y
+          l = p ++ q
+
+duplication :: Eq a => [a] -> Maybe [a]
+duplication [] = Nothing
+duplication l = case inList (head l) $ tail l of
+    Just a -> Just [a]
+    Nothing -> duplication $ tail l
+
+inList :: Eq a => a -> [a] -> Maybe a
+inList a [] = Nothing
+inList a l = if a == head l then Just a else inList a $ tail l
 
 
 
