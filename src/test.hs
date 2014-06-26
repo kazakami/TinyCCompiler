@@ -72,7 +72,18 @@ putPrs parser str = putStr $ prs parser str
 main :: IO ()
 main = do
    input <- getLine
-   putStr $ prs program input
+   putStrLn $ prs program input
+
+data ObjKind = Fresh
+             | Var
+             | Func
+             | Param
+             | UndefFun deriving Show
+
+data Obj = Obj { name::String,
+                 lev::Integer,
+                 kind::ObjKind,
+                 offsef::Integer } deriving Show
 
 data Expr = Ident String
           | Declarator String
@@ -141,8 +152,8 @@ showVal (Declarator s) = s
 showVal (DeclaratorList []) = ""--"(DeclaratorList nil)"
 showVal (DeclaratorList l) = "(DeclaratorList " ++  (unwords $ map showVal l) ++ ")"
 showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
-showVal (DeclarationList []) = "(DeclarationList nil)"
-showVal (DeclarationList l) = "(DeclarationList " ++  (unwords $ map showVal l) ++ ")"
+showVal (DeclarationList []) = ""--"(DeclarationList nil)"
+showVal (DeclarationList l) = " (DeclarationList " ++  (unwords $ map showVal l) ++ ")"
 showVal (ParamDclr n) = "(int " ++ showVal n ++ ")"
 showVal (ParamDclrList []) = "(ParamDclrList nil)"
 showVal (ParamDclrList l) = "" ++  (unwords $ map showVal l) ++ ""
@@ -165,7 +176,7 @@ showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
 showStatement (SttList []) = "(SttList nil)"
 showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
-showStatement (CompoundStt e s) = "(CompoundStt " ++ showVal e ++ " " ++
+showStatement (CompoundStt e s) = "(CompoundStt " ++ showVal e ++ "" ++
                                   showStatement s ++ ")"
 
 showFuncDef :: FuncDef -> String
@@ -247,8 +258,8 @@ paramDeclarationList = do p <- sepBy paramDeclaration $ spaces >> char ',' >> sp
                           return $  ParamDclrList p
 
 declarationList :: Parser Expr
-declarationList = do  p <- sepBy declaration spaces
-                      return $  DeclarationList p
+declarationList = do p <- sepBy declaration spaces
+                     return $  DeclarationList p
 
 declaration :: Parser Expr
 declaration = do spaces
@@ -265,8 +276,8 @@ declarator = do p <- identifier
                 return $ Declarator p
 
 declaratorList :: Parser Expr
-declaratorList = do  p <- sepBy declarator $ spaces >> char ',' >> spaces
-                     return $  DeclaratorList p
+declaratorList = do p <- sepBy declarator $ spaces >> char ',' >> spaces
+                    return $  DeclaratorList p
 
 statementList :: Parser Statement
 statementList = do p <- sepBy statement spaces
@@ -407,15 +418,22 @@ arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
                   return $ ArguExprList p
 
 compoundStatement :: Parser Statement
-compoundStatement = do spaces
-                       char '{'
-                       spaces
-                       p <- declarationList
-                       spaces
-                       q <- statementList
-                       spaces
-                       char '}'
-                       return $ CompoundStt p q
+compoundStatement = try (do spaces
+                            char '{'
+                            spaces
+                            p <- declarationList
+                            spaces
+                            q <- statementList
+                            spaces
+                            char '}'
+                            return (CompoundStt p q))
+                     <|> (do spaces
+                             char '{'
+                             spaces
+                             p <- statementList
+                             spaces
+                             char '}'
+                             return (CompoundStt (DeclarationList []) p))
 
 
 
@@ -424,11 +442,24 @@ prsProgram str = case parse program "TinyC" str of
     Left err -> putStrLn $ show err
     Right val -> case checkTreeDuplication val of
         Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
-        Nothing -> putStrLn $ show val --putStrLn . unwords . extractName $ val
+        Nothing -> putStrLn . unwords . map show . snd . semanticAnalysis $ (val, []::[Obj])
+--        Nothing -> putStrLn $ show val --putStrLn . unwords . extractName $ val
 
 
---checkTree :: ExternDclr -> Bool
---checkTree (Program l) = 
+
+
+semanticAnalysis :: (ExternDclr, [Obj]) -> (ExternDclr, [Obj])
+semanticAnalysis ((Program l) ,st) =
+    (prog,
+    (reverse . snd . pushList st . map levZeroVarObj . extractDclrName $ prog)
+    ++ (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog))
+    where levZeroVarObj :: String -> Obj
+          levZeroVarObj s = Obj s 0 Var 0
+          levZeroFuncObj :: (String, Integer) -> Obj
+          levZeroFuncObj (s, i) = Obj s 0 Func i
+          prog = Program l
+semanticAnalysis (ExternFuncDec (FuncDefinition e1 e2 s)) =
+    
 
 
 checkTreeDuplication :: ExternDclr -> Maybe [String]
@@ -486,6 +517,17 @@ extractName (ExternFuncDec (FuncDefinition e1 e2 e3)) = [showVal e1]
 extractName (Program l)  = foldr (++) [] $ map extractName l
 extractName _ = []
 
+extractDclrName :: ExternDclr -> [String]
+extractDclrName (ExternDeclaration (Declaration (DeclaratorList l))) =
+    map showVal l
+extractDclrName (Program l)  = foldr (++) [] $ map extractDclrName l
+extractDclrName _ = []
+
+extractFuncName :: ExternDclr -> [(String, Integer)]
+extractFuncName (ExternFuncDec (FuncDefinition e1 (ParamDclrList l) e3)) =
+    [(showVal e1, fromIntegral $ length l)]
+extractFuncName (Program l)  = foldr (++) [] $ map extractFuncName l
+extractFuncName _ = []
 
 extractNameFromExpr :: Expr -> String
 extractNameFromExpr (ParamDclr e) = showVal e
@@ -498,6 +540,15 @@ maybeCouple x y = if l == [] then Nothing else Just l
     where p = fromMaybe [] x
           q = fromMaybe [] y
           l = p ++ q
+
+push :: a -> [a] -> (a, [a])
+push c cs = (c, c:cs)
+
+pop :: [a] -> (a, [a])
+pop (c:cs) = (c, cs)
+
+pushList :: [a] -> [a] -> ([a], [a])
+pushList c cs = (c, c ++ cs)
 
 duplication :: Eq a => [a] -> Maybe [a]
 duplication [] = Nothing
