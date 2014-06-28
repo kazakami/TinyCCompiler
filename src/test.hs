@@ -83,7 +83,7 @@ data ObjKind = Fresh
 data Obj = Obj { name::String,
                  lev::Integer,
                  kind::ObjKind,
-                 offsef::Integer } deriving Show
+                 offset::Integer } deriving Show
 
 data Expr = Ident String
           | Declarator String
@@ -113,6 +113,8 @@ data Expr = Ident String
           | ArguExprList [Expr]
           | PostfixExpr Expr Expr
           | ExprList [Expr]
+          | Variable Obj
+          | UnDefVar String
 
 data Statement = Non
                | Solo Expr
@@ -163,6 +165,9 @@ showVal (PostfixExpr n1 n2) = "(CallFunc " ++ showVal n1 ++ " " ++
                                 showVal n2 ++ ")"
 showVal (ExprList []) = "(List nil)"
 showVal (ExprList l) = "(List " ++  (unwords $ map showVal l) ++ ")"
+showVal (Variable o) = "(Var " ++ name o ++ " " ++ (show $ lev o) ++ " " ++ 
+                        (show $ kind o) ++ " " ++ (show $ offset o) ++ ")"
+showVal (UnDefVar s) = "(UnDefinedVar " ++ s ++ ")"
 
 showStatement :: Statement -> String
 showStatement (Non) = "()"
@@ -187,7 +192,7 @@ showExternDclr :: ExternDclr -> String
 showExternDclr (ExternDeclaration e) = showVal e
 showExternDclr (ExternFuncDec f) = showFuncDef f
 showExternDclr (Program []) = "(Program nil)"
-showExternDclr (Program l) = "(Program\n  " ++ (unwords $  map ((++ "\n") . showExternDclr) l) ++ ")\n"
+showExternDclr (Program l) = "(Program\n  " ++ (unwords $ map ((++ "\n") . showExternDclr) l) ++ ")\n"
 
 
 rightExpr :: Parser Expr
@@ -442,23 +447,144 @@ prsProgram str = case parse program "TinyC" str of
     Left err -> putStrLn $ show err
     Right val -> case checkTreeDuplication val of
         Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
-        Nothing -> putStrLn . unwords . map show . snd . semanticAnalysis $ (val, []::[Obj])
+        Nothing -> putStrLn . show . fst . semanticAnalysis $ (val, [])
+--        Nothing -> putStrLn . show . snd . semanticAnalysis 
+--        Nothing -> putStrLn . unwords . map show . snd . semanticAnalysis $ (val, []::[Obj])
 --        Nothing -> putStrLn $ show val --putStrLn . unwords . extractName $ val
 
 
 
 
 semanticAnalysis :: (ExternDclr, [Obj]) -> (ExternDclr, [Obj])
-semanticAnalysis ((Program l) ,st) =
-    (prog,
-    (reverse . snd . pushList st . map levZeroVarObj . extractDclrName $ prog)
-    ++ (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog))
+semanticAnalysis (prog@(Program l) ,st) =
+    (Program $ map semanticAnlys l, stack)
     where levZeroVarObj :: String -> Obj
           levZeroVarObj s = Obj s 0 Var 0
           levZeroFuncObj :: (String, Integer) -> Obj
           levZeroFuncObj (s, i) = Obj s 0 Func i
-          prog = Program l
-semanticAnalysis (ExternFuncDec (FuncDefinition e1 e2 s)) =
+          semanticAnlys :: ExternDclr -> ExternDclr
+          semanticAnlys ex = fst $ semanticAnalysis (ex, stack)
+          stack =
+           (reverse . snd . pushList st . map levZeroVarObj . extractDclrName $ prog)
+           ++ (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog)
+semanticAnalysis ((ExternFuncDec (FuncDefinition name p@(ParamDclrList l) s)), st) =
+    (ExternFuncDec $ FuncDefinition name p $ fst statement, snd statement)
+    where stack = snd $ pushList (map makeLevOneObj $ indexing (map getPrmName l) 0) st
+          statement = makeSemanticTreeS (s, stack)
+          makeLevOneObj :: (String, Integer) -> Obj
+          makeLevOneObj (nam, off) = Obj nam 1 Param off
+          getPrmName :: Expr -> String
+          getPrmName (ParamDclr (Declarator s)) = s
+semanticAnalysis (extern, st) = (extern, st)
+
+makeSemanticTreeS :: (Statement, [Obj]) -> (Statement, [Obj])
+makeSemanticTreeS (statement@(CompoundStt e s), st) =
+    (CompoundStt (fst expr) (fst $ makeSemanticTreeS (s, snd expr)), snd expr)
+    where expr = makeSemanticTreeE (e, st)
+makeSemanticTreeS (statement@(If e s), st) =
+    (If (fst $ makeSemanticTreeE (e, st)) . fst . makeSemanticTreeS $ (s, st), st)
+makeSemanticTreeS (statement@(IfElse e s1 s2), st) =
+    (IfElse (fst $ makeSemanticTreeE (e, st))
+            (fst $ makeSemanticTreeS (s1, st)) . fst . makeSemanticTreeS $ (s2, st),
+     st)
+makeSemanticTreeS (statement@(While e s), st) =
+    (While (fst $ makeSemanticTreeE (e, st)) . fst . makeSemanticTreeS $ (s, st), st)
+makeSemanticTreeS (statement@(Solo e), st) =
+    ((Solo . fst . makeSemanticTreeE $ (e, st)), st)
+makeSemanticTreeS (statement@(Return e), st) =
+    ((Return . fst . makeSemanticTreeE $ (e, st)), st)
+makeSemanticTreeS (statement@(SttList l), st) =
+    (SttList (map makeTree l), st)
+    where makeTree :: Statement -> Statement
+          makeTree s = fst $ makeSemanticTreeS (s, st)
+makeSemanticTreeS (statement, st) = (statement, st)
+
+makeSemanticTreeE :: (Expr, [Obj]) -> (Expr, [Obj])
+makeSemanticTreeE (expr@(DeclarationList l), st) =
+    (expr,
+     snd $ pushList (map makeObjFromCouple $ reverseIndexing
+      (foldr (++) [] $ map showList l) stackOff) st)
+    where --これからスタックに積むオブジェクトのlevel
+          stackLev | length st == 0 = 0
+                   | otherwise = (+) 1 . lev . head $ st
+          --これからスタックに積むオブジェクトのoffsetの始点
+          stackOff | length st == 0 = 0
+                   | otherwise = (+) 1 . offset . head $ st
+          makeObjFromCouple :: (String, Integer) -> Obj
+          makeObjFromCouple (nam, off) = Obj nam stackLev Var off
+          showList :: Expr -> [String]
+          showList (Declaration (DeclaratorList l)) = map showStr l
+          showList _ = []
+          showStr :: Expr -> String
+          showStr (Declarator s) = s
+          showStr _ = ""
+makeSemanticTreeE (Ident s, st) =
+    case searchStack st s of
+        Just obj -> (Variable obj, st)
+        Nothing -> (UnDefVar s, st)
+makeSemanticTreeE (Minus e, st) =
+    (Minus . fst . makeSemanticTreeE $ (e, st), st)
+makeSemanticTreeE (Parenthesis e, st) =
+    (Parenthesis . fst . makeSemanticTreeE $ (e, st), st)
+makeSemanticTreeE ((Mul e1 e2), st) =
+    makeSemanticTreeE_2op Mul e1 e2 st
+makeSemanticTreeE ((Div e1 e2), st) =
+    makeSemanticTreeE_2op Div e1 e2 st
+makeSemanticTreeE ((Add e1 e2), st) =
+    makeSemanticTreeE_2op Add e1 e2 st
+makeSemanticTreeE ((Sub e1 e2), st) =
+    makeSemanticTreeE_2op Sub e1 e2 st
+makeSemanticTreeE ((GrTh e1 e2), st) =
+    makeSemanticTreeE_2op GrTh e1 e2 st
+makeSemanticTreeE ((GrEq e1 e2), st) =
+    makeSemanticTreeE_2op GrEq e1 e2 st
+makeSemanticTreeE ((LsTh e1 e2), st) =
+    makeSemanticTreeE_2op LsTh e1 e2 st
+makeSemanticTreeE ((LsEq e1 e2), st) =
+    makeSemanticTreeE_2op LsEq e1 e2 st
+makeSemanticTreeE ((Eq e1 e2), st) =
+    makeSemanticTreeE_2op Eq e1 e2 st
+makeSemanticTreeE ((NE e1 e2), st) =
+    makeSemanticTreeE_2op NE e1 e2 st
+makeSemanticTreeE ((And e1 e2), st) =
+    makeSemanticTreeE_2op And e1 e2 st
+makeSemanticTreeE ((Or e1 e2), st) =
+    makeSemanticTreeE_2op Or e1 e2 st
+makeSemanticTreeE ((Asgn e1 e2), st) =
+    makeSemanticTreeE_2op Asgn e1 e2 st
+makeSemanticTreeE ((Exprssn e1 e2), st) =
+    makeSemanticTreeE_2op Exprssn e1 e2 st
+
+makeSemanticTreeE (ArguExprList l, st) = undefined
+--    (ArguExprList map,st)
+
+makeSemanticTreeE (expr, st) = (expr, st)
+
+makeSemanticTreeE_2op :: (Expr -> Expr -> Expr) -> Expr -> Expr -> [Obj]
+                          -> (Expr, [Obj])
+makeSemanticTreeE_2op constructor e1 e2 st =
+    ((constructor (fst $ makeSemanticTreeE (e1, st))
+                  (fst $ makeSemanticTreeE (e2, st))), st)
+
+makeSemanticTreeE_lst :: ([Expr] -> Expr) -> [Expr] -> [Obj]
+                          -> (Expr, [Obj])
+makeSemanticTreeE_lst constructor l st =
+    ((constructor $ map makeTree l), st)
+    where makeTree :: Expr -> Expr
+          makeTree e = fst $ makeSemanticTreeE (e, st)
+
+
+
+
+varObj :: String -> Integer -> Integer -> Obj
+varObj nam lev off = Obj nam lev Var off
+          
+searchStack :: [Obj] -> String -> Maybe Obj
+searchStack [] _ = Nothing
+searchStack (car:cdr) ident | name car == ident = Just car
+                            | otherwise         = searchStack cdr ident
+
+--((ExternFuncDec (FuncDefinition e1 e2 s)), st) = undefined
     
 
 
@@ -476,7 +602,8 @@ checkTreeDuplication _ = Nothing
 
 checkSttDuplication :: Statement -> Maybe [String]
 checkSttDuplication (CompoundStt e s) =
-    maybeCouple (duplication . extractDclrFromStt $ CompoundStt e s) $ checkSttDuplication s
+    maybeCouple (duplication . extractDclrFromStt $ CompoundStt e s)
+                 $ checkSttDuplication s
 checkSttDuplication (If e s) = checkSttDuplication s
 checkSttDuplication (IfElse e s1 s2) =
     maybeCouple (duplication $ extractDclrFromStt s1)
@@ -560,5 +687,16 @@ inList :: Eq a => a -> [a] -> Maybe a
 inList a [] = Nothing
 inList a l = if a == head l then Just a else inList a $ tail l
 
+indexing :: [a] -> Integer -> [(a, Integer)]
+indexing l start = iter (l, start)
+    where iter :: ([a], Integer) -> [(a, Integer)]
+          iter ([], m) = []
+          iter ([atom], m) = [(atom, m)]
+          iter (car:cdr, m) = (car, m) : iter (cdr, m + 1)
 
+reverseIndexing :: [a] -> Integer -> [(a, Integer)]
+reverseIndexing l start = indexReverse $ indexing l start
+    where indexReverse :: [(a, Integer)] -> [(a, Integer)]
+          indexReverse l =
+           map (\ (dat, index) -> (dat, fromIntegral (length l)-index-1+start*2)) l
 
