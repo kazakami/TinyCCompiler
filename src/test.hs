@@ -78,7 +78,8 @@ data ObjKind = Fresh
              | Var
              | Func
              | Param
-             | UndefFun deriving Show
+             | PrmNumNonMathedFunc
+             | UnDefFun deriving Show
 
 data Obj = Obj { name::String,
                  lev::Integer,
@@ -113,7 +114,7 @@ data Expr = Ident String
           | ArguExprList [Expr]
           | PostfixExpr Expr Expr
           | ExprList [Expr]
-          | Variable Obj
+          | Object Obj
           | UnDefVar String
 
 data Statement = Non
@@ -165,7 +166,7 @@ showVal (PostfixExpr n1 n2) = "(CallFunc " ++ showVal n1 ++ " " ++
                                 showVal n2 ++ ")"
 showVal (ExprList []) = "(List nil)"
 showVal (ExprList l) = "(List " ++  (unwords $ map showVal l) ++ ")"
-showVal (Variable o) = "(Var " ++ name o ++ " " ++ (show $ lev o) ++ " " ++ 
+showVal (Object o) = "(Obj " ++ name o ++ " " ++ (show $ lev o) ++ " " ++ 
                         (show $ kind o) ++ " " ++ (show $ offset o) ++ ")"
 showVal (UnDefVar s) = "(UnDefinedVar " ++ s ++ ")"
 
@@ -469,7 +470,8 @@ semanticAnalysis (prog@(Program l) ,st) =
            ++ (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog)
 semanticAnalysis ((ExternFuncDec (FuncDefinition name p@(ParamDclrList l) s)), st) =
     (ExternFuncDec $ FuncDefinition name p $ fst statement, snd statement)
-    where stack = snd $ pushList (map makeLevOneObj $ indexing (map getPrmName l) 0) st
+    where stack = snd $ pushList
+                   (reverse . map makeLevOneObj $ indexing (map getPrmName l) 0) st
           statement = makeSemanticTreeS (s, stack)
           makeLevOneObj :: (String, Integer) -> Obj
           makeLevOneObj (nam, off) = Obj nam 1 Param off
@@ -520,7 +522,7 @@ makeSemanticTreeE (expr@(DeclarationList l), st) =
           showStr _ = ""
 makeSemanticTreeE (Ident s, st) =
     case searchStack st s of
-        Just obj -> (Variable obj, st)
+        Just obj -> (Object obj, st)
         Nothing -> (UnDefVar s, st)
 makeSemanticTreeE (Minus e, st) =
     (Minus . fst . makeSemanticTreeE $ (e, st), st)
@@ -555,8 +557,22 @@ makeSemanticTreeE ((Asgn e1 e2), st) =
 makeSemanticTreeE ((Exprssn e1 e2), st) =
     makeSemanticTreeE_2op Exprssn e1 e2 st
 
-makeSemanticTreeE (ArguExprList l, st) = undefined
---    (ArguExprList map,st)
+makeSemanticTreeE ((PostfixExpr e1@(Ident s) e2@(ArguExprList l)), st) =
+    case foundObj of
+        Nothing -> makePostfixExpr UnDefFun
+        Just o | offset o == numOfArgu -> makePostfixExpr Func
+               | otherwise             -> makePostfixExpr PrmNumNonMathedFunc
+    where numOfArgu = fromIntegral $ length l
+          foundObj = searchStack st s
+          analysisedArgList = fst $ makeSemanticTreeE (e2, st)
+          makePostfixExpr :: ObjKind -> (Expr, [Obj])
+          makePostfixExpr k =
+           (PostfixExpr (Object $ Obj s 0 k numOfArgu) analysisedArgList, st)
+
+makeSemanticTreeE (ArguExprList l, st) =
+    (ArguExprList $ map makeTree l,st)
+    where makeTree :: Expr -> Expr
+          makeTree e = fst $ makeSemanticTreeE (e, st)
 
 makeSemanticTreeE (expr, st) = (expr, st)
 
