@@ -11,6 +11,7 @@ import Text.ParserCombinators.Parsec.Language
 import GHC.IO.Handle
 import System.IO
 import Data.Maybe
+import Data.List
 import Data.Char (ord)
 
 tinyCStyle = emptyDef {
@@ -79,12 +80,31 @@ data ObjKind = Fresh
              | Func
              | Param
              | PrmNumNonMathedFunc
-             | UnDefFun deriving Show
+             | UnDefFun 
+             | Err deriving (Show, Eq)
 
 data Obj = Obj { name::String,
                  lev::Integer,
                  kind::ObjKind,
                  offset::Integer } deriving Show
+
+--引数2の演算
+data Op2 = Mul
+         | Div
+         | Add
+         | Sub
+         | GrTh
+         | GrEq
+         | LsTh
+         | LsEq
+         | Eq
+         | NE
+         | And
+         | Or
+         | Asgn
+         | Exprssn deriving (Show, Eq)
+
+--引数1の演算
 
 data Expr = Ident String
           | Declarator String
@@ -95,21 +115,7 @@ data Expr = Ident String
           | ParamDclrList [Expr]
           | Number Integer
           | Minus Expr
-          | Mul Expr Expr
-          | Div Expr Expr
-          | Add Expr Expr
-          | Sub Expr Expr
-          | Pair Expr Expr
-          | GrTh Expr Expr
-          | GrEq Expr Expr
-          | LsTh Expr Expr
-          | LsEq Expr Expr
-          | Eq Expr Expr
-          | NE Expr Expr
-          | And Expr Expr
-          | Or Expr Expr
-          | Asgn Expr Expr
-          | Exprssn Expr Expr
+          | TwoOp Op2 Expr Expr
           | Parenthesis Expr
           | ArguExprList [Expr]
           | PostfixExpr Expr Expr
@@ -120,8 +126,11 @@ data Expr = Ident String
 data Statement = Non
                | Solo Expr
                | If Expr Statement
+               | TagedIf [Integer] Expr Statement
                | IfElse Expr Statement Statement
+               | TagedIfElse [Integer] Expr Statement Statement
                | While Expr Statement
+               | TagedWhile [Integer] Expr Statement
                | Return Expr
                | SttList [Statement]
                | CompoundStt Expr Statement
@@ -129,27 +138,16 @@ data Statement = Non
 data FuncDef = FuncDefinition Expr Expr Statement
 data ExternDclr = ExternDeclaration Expr
                 | ExternFuncDec FuncDef
+                | NLFunc FuncDef Integer
+                | TagedFunc FuncDef Integer [([Integer], Integer)]
                 | Program [ExternDclr]
 
 showVal :: Expr -> String
 showVal (Number n) = show n -- "(Num " ++ show n ++ ")"
 showVal (Ident s) = s --"(Ident " ++ s ++ ")"
 showVal (Minus n) = "(- " ++ showVal n ++ ")"
-showVal (Mul n1 n2) = "(* " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Div n1 n2) = "(/ " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Add n1 n2) = "(+ " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Sub n1 n2) = "(- " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (GrTh n1 n2) = "(> " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (GrEq n1 n2) = "(>= " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (LsTh n1 n2) = "(< " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (LsEq n1 n2) = "(<= " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Eq n1 n2) = "(== " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (NE n1 n2) = "(/= " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (And n1 n2) = "(and " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Or n1 n2) = "(or " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Pair n1 n2) = "(Pair " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Asgn n1 n2) = "(set! " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
-showVal (Exprssn n1 n2) = "(expr " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
+showVal (TwoOp op n1 n2) =
+    "(" ++ show op ++ " " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
 showVal (Parenthesis n) = showVal n
 showVal (Declarator s) = s
 showVal (DeclaratorList []) = ""--"(DeclaratorList nil)"
@@ -166,8 +164,14 @@ showVal (PostfixExpr n1 n2) = "(CallFunc " ++ showVal n1 ++ " " ++
                                 showVal n2 ++ ")"
 showVal (ExprList []) = "(List nil)"
 showVal (ExprList l) = "(List " ++  (unwords $ map showVal l) ++ ")"
-showVal (Object o) = "(Obj " ++ name o ++ " " ++ (show $ lev o) ++ " " ++ 
-                        (show $ kind o) ++ " " ++ (show $ offset o) ++ ")"
+showVal (Object o) =
+    case kind o of
+        Param -> "(" ++ name o ++ ":" ++ (show $ lev o) ++ ":" ++ 
+                  (show $ 8 + 4 *  offset o) ++ ")"
+        Var -> "(" ++ name o ++ ":" ++ (show $ lev o) ++ ":" ++ 
+                (show $ - 4 *  offset o) ++ ")"
+        _ -> "(" ++ name o ++ ":" ++ (show $ lev o) ++ ":" ++ 
+              (show $ kind o) ++ ":" ++ (show $ offset o) ++ ")"
 showVal (UnDefVar s) = "(UnDefinedVar " ++ s ++ ")"
 
 showStatement :: Statement -> String
@@ -179,6 +183,14 @@ showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
                                  showStatement s2 ++ ")"
 showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
                             showStatement s ++ ")"
+showStatement (TagedIf i e s) =
+    "(tif " ++ show i ++ " " ++ showVal e ++ " " ++ showStatement s ++ ")"
+showStatement (TagedIfElse i e s1 s2) =
+    "(tif " ++ show i ++ " "  ++ showVal e ++ " " ++
+     showStatement s1 ++ " " ++ showStatement s2 ++ ")"
+showStatement (TagedWhile i e s) =
+    "(twhile " ++ show i ++ "(" ++ showVal e ++ ")" ++
+     showStatement s ++ ")"
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
 showStatement (SttList []) = "(SttList nil)"
 showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
@@ -192,20 +204,24 @@ showFuncDef (FuncDefinition e1 e2 s) = "(FuncDef (int " ++ showVal e1 ++ ") (" +
 showExternDclr :: ExternDclr -> String
 showExternDclr (ExternDeclaration e) = showVal e
 showExternDclr (ExternFuncDec f) = showFuncDef f
+showExternDclr (NLFunc f nl) = showFuncDef f ++ "\n  " ++ show nl 
+showExternDclr (TagedFunc f nl i) = showFuncDef f ++ "\n  " ++ show nl ++
+                                     "\n  " ++ show i ++ "\n" 
 showExternDclr (Program []) = "(Program nil)"
-showExternDclr (Program l) = "(Program\n  " ++ (unwords $ map ((++ "\n") . showExternDclr) l) ++ ")\n"
+showExternDclr (Program l) =
+    "(Program\n " ++ (unwords $ map ((++ "\n") . showExternDclr) l) ++ ")\n"
 
 
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
 
-operatorTable = [[op "*" Mul AssocLeft, op "/" Div AssocLeft]
-                ,[op "+" Add AssocLeft, op "-" Sub AssocLeft]
-                ,[op ">" GrTh AssocLeft, op ">=" GrEq AssocLeft
-                , op "<" LsTh AssocLeft, op "<=" LsEq AssocLeft]
-                ,[op "==" Eq AssocLeft, op "!=" NE AssocLeft]
-                ,[op "&&" And AssocLeft]
-                ,[op "||" Or AssocLeft]]
+operatorTable = [[op "*" (TwoOp Mul) AssocLeft, op "/" (TwoOp Div) AssocLeft]
+                ,[op "+" (TwoOp Add) AssocLeft, op "-" (TwoOp Sub) AssocLeft]
+                ,[op ">" (TwoOp GrTh) AssocLeft, op ">=" (TwoOp GrEq) AssocLeft
+                , op "<" (TwoOp LsTh) AssocLeft, op "<=" (TwoOp LsEq) AssocLeft]
+                ,[op "==" (TwoOp Eq) AssocLeft, op "!=" (TwoOp NE) AssocLeft]
+                ,[op "&&" (TwoOp And) AssocLeft]
+                ,[op "||" (TwoOp Or) AssocLeft]]
          where
            op s f assoc
               = Infix (do{reservedOp s; return f}) assoc
@@ -218,12 +234,6 @@ instance Show Statement where show = showStatement
 instance Show FuncDef where show = showFuncDef
 instance Show ExternDclr where show = showExternDclr
 
-
-pairExpr :: Parser Expr
-pairExpr = do n1 <- unaryExpr
-              _ <- char '*'
-              n2 <- unaryExpr
-              return $ Pair n1 n2
 
 program :: Parser ExternDclr
 program = do p <- sepBy externDeclaration spaces
@@ -269,8 +279,7 @@ declarationList = do p <- sepBy declaration spaces
 
 declaration :: Parser Expr
 declaration = do spaces
-                 string "int"
-                 spaces1
+                 reserved "int"
                  p <- declaratorList
                  spaces
                  _ <- string ";"
@@ -283,7 +292,7 @@ declarator = do p <- identifier
 
 declaratorList :: Parser Expr
 declaratorList = do p <- sepBy declarator $ spaces >> char ',' >> spaces
-                    return $  DeclaratorList p
+                    return $ DeclaratorList p
 
 statementList :: Parser Statement
 statementList = do p <- sepBy statement spaces
@@ -356,7 +365,7 @@ expression = try (do spaces
                      _ <- char ','
                      spaces
                      q <- expression
-                     return (Exprssn p q))
+                     return (TwoOp Exprssn p q))
                <|> assignExpr
 
 assignExpr :: Parser Expr
@@ -366,7 +375,7 @@ assignExpr = try (do spaces
                      _ <- char '='
                      spaces
                      q <- assignExpr
-                     return (Asgn p q))
+                     return (TwoOp Asgn p q))
               <|> rightExpr
 
 primaryExpr :: Parser Expr
@@ -377,7 +386,7 @@ primaryExpr =
             p <- expression
             char ')'
             spaces
-            return (Parenthesis p))
+            return p) --Parenthesis
      <|> number
      <|> ident
 
@@ -433,14 +442,14 @@ compoundStatement = try (do spaces
                             spaces
                             char '}'
                             return (CompoundStt p q))
-                     <|> (do spaces
+{--                     <|> (do spaces
                              char '{'
                              spaces
                              p <- statementList
                              spaces
                              char '}'
                              return (CompoundStt (DeclarationList []) p))
-
+--}
 
 
 prsProgram :: String -> IO ()
@@ -448,69 +457,212 @@ prsProgram str = case parse program "TinyC" str of
     Left err -> putStrLn $ show err
     Right val -> case checkTreeDuplication val of
         Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
-        Nothing -> putStrLn . show . fst . semanticAnalysis $ (val, [])
---        Nothing -> putStrLn . show . snd . semanticAnalysis 
---        Nothing -> putStrLn . unwords . map show . snd . semanticAnalysis $ (val, []::[Obj])
---        Nothing -> putStrLn $ show val --putStrLn . unwords . extractName $ val
+        Nothing -> 
+            let semanticAnalysised = semanticAnalysis (val, [])
+            in case extractErr . snd $ semanticAnalysised of
+                errs@_:_ -> putStrLn . (++) "Err : " . show $ errs
+                [] -> putStrLn . unlines . codeGenerate . labelTagging . fst $ semanticAnalysised
 
+
+codeGenerate :: ExternDclr -> [String]
+codeGenerate (Program l) =
+    foldr (++) [] $ map codeGenerate l
+codeGenerate (TagedFunc (FuncDefinition (Declarator name) (ParamDclrList l) s)
+                        nl i) =
+    ["\tGLOBAL\t" ++ name,
+     name ++ "\tpush\tebp",
+     "\tmov\tebp, esp",
+     "\tsub\tesp, " ++ show nl]
+    ++ codeGenerateS nl s ++
+    ["Lret\tmov\tesp, ebp",
+     "\tpop\tebp",
+     "\tret"]
+
+codeGenerateS :: Integer ->Statement -> [String]
+codeGenerateS nl (SttList l) =
+    foldr (++) [] $ map (codeGenerateS nl) l
+codeGenerateS nl (CompoundStt e s) =
+    codeGenerateS nl s
+codeGenerateS nl (Return e) =
+    codeGenerateE nl e
+    ++ ["\tjmp\tLret"]
+
+codeGenerateE :: Integer -> Expr -> [String]
+codeGenerateE _ (Number n) =
+    ["\tmov\teax, " ++ show n]
+codeGenerateE i (TwoOp op e1 e2) =
+    codeGenerateE (i+4) e1
+    ++ [emit OpMOV "" (genLoc i) eax]
+    ++ codeGenerateE (i+4) e2
+    ++ [emitOp2 op "" eax $ genLoc i]
+    
+
+data AsmOper = OpMOV
+             | OpADD
+             | OpMUL
+
+showOp OpMOV = "mov"
+showOp OpADD = "add"
+showOp OpMUL = "imul"
+
+
+instance Show AsmOper where show = showOp
+
+asmOpTable = [(Add, OpADD),
+              (Mul, OpMUL)]
+
+
+searchAsmOp :: Op2 -> Maybe AsmOper
+searchAsmOp = search asmOpTable
+    where search :: [(Op2, AsmOper)] -> Op2 -> Maybe AsmOper
+          search [] op = Nothing
+          search (car:cdr) op | (fst car) == op = Just $ snd car
+                              | otherwise       = search cdr op
+
+eax = "eax"
+
+genLoc :: Integer -> String
+genLoc i = "loc(" ++ show i ++ ")"
+
+--ラベル、第一オペランド、第二オペランド
+emit :: AsmOper -> String -> String -> String -> String
+emit op l e1 e2 = l ++ "\t" ++ show op ++ "\t" ++ e1 ++ ", " ++ e2
+
+emitOp2 :: Op2 -> String -> String -> String -> String
+emitOp2 op label e1 e2 = case searchAsmOp op of
+                             Just a -> emit a label e1 e2
+                             Nothing -> ";No implementation error"
+
+
+labelSort :: [([Integer], Integer)] -> [([Integer], Integer)]
+labelSort a = sort (\ (x,_) (y,_) -> labelCmp x y) a
+    where labelCmp :: [Integer] -> [Integer] -> Bool
+          labelCmp [] [] = True
+          labelCmp [] _ = True
+          labelCmp _ [] = False
+          labelCmp a b | last a < last b = True
+                       | last a == last b = labelCmp (init a) (init b)
+                       | last a > last b = False
+          sort :: (a -> a -> Bool) -> [a] -> [a]
+          sort cmp (pivot:rest) = filter (\ x -> cmp x pivot) (sort cmp rest)
+                                   ++ [pivot]
+                                   ++ filter (\ x -> not $ cmp x pivot) (sort cmp rest)
+          sort _ l = l
+
+labelModify :: Integer -> [([Integer], Integer)] -> [([Integer], Integer)]
+labelModify a ((l,off):cdr) = (l,a) : (labelModify (a+off) cdr)
+labelModify _ [] = []
+
+labelTagging :: ExternDclr -> ExternDclr
+labelTagging (Program l) =
+    Program $ map labelTagging l
+labelTagging (NLFunc (FuncDefinition e1 e2 s) nl) =
+    TagedFunc (FuncDefinition e1 e2 . fst $ labeled) nl .
+     labelModify 0 . labelSort . snd $ labeled
+    where labeled = labelTaggingS s []
+labelTagging e = e
+
+labelTaggingS :: Statement -> [Integer] -> (Statement, [([Integer], Integer)])
+labelTaggingS (CompoundStt e s) i =
+    (CompoundStt e $ fst tag, snd tag)
+    where tag = labelTaggingS s i
+labelTaggingS (If e s) i =
+    (TagedIf i e . fst $ tag, (i,1):(snd tag))
+    where tag = labelTaggingS s $ 1:i
+labelTaggingS (IfElse e s1 s2) i =
+    (TagedIfElse i e (fst tag1) (fst tag2), (i,2):(snd tag1 ++ snd tag2))
+    where tag1 = labelTaggingS s1 $ 1:i
+          tag2 = labelTaggingS s2 $ 2:i
+labelTaggingS (While e s) i =
+    (TagedWhile i e (fst tag), (i,2):(snd tag))
+    where tag = labelTaggingS s $ 2:i
+labelTaggingS (SttList l) i =
+    (SttList $ map fst labeled, foldr (++) [] $ map snd labeled)
+    where labeling :: (Statement, Integer) -> (Statement, [([Integer], Integer)])
+          labeling (s, num) = labelTaggingS s $ num:i
+          labeled = map labeling $ indexing l 1
+labelTaggingS statement i = (statement, [])
 
 
 
 semanticAnalysis :: (ExternDclr, [Obj]) -> (ExternDclr, [Obj])
 semanticAnalysis (prog@(Program l) ,st) =
-    (Program $ map semanticAnlys l, stack)
+    (Program $ map semanticAnlysEx l, stack ++ (foldr (++) [] $ map semanticAnlysSt l))
     where levZeroVarObj :: String -> Obj
           levZeroVarObj s = Obj s 0 Var 0
           levZeroFuncObj :: (String, Integer) -> Obj
           levZeroFuncObj (s, i) = Obj s 0 Func i
-          semanticAnlys :: ExternDclr -> ExternDclr
-          semanticAnlys ex = fst $ semanticAnalysis (ex, stack)
+          semanticAnlysEx :: ExternDclr -> ExternDclr
+          semanticAnlysEx ex = fst $ semanticAnalysis (ex, stack)
+          semanticAnlysSt :: ExternDclr -> [Obj]
+          semanticAnlysSt ex = snd $ semanticAnalysis (ex, stack)
           stack =
            (reverse . snd . pushList st . map levZeroVarObj . extractDclrName $ prog)
-           ++ (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog)
+           ++ 
+           (reverse . snd . pushList st . map levZeroFuncObj . extractFuncName $ prog)
 semanticAnalysis ((ExternFuncDec (FuncDefinition name p@(ParamDclrList l) s)), st) =
-    (ExternFuncDec $ FuncDefinition name p $ fst statement, snd statement)
-    where stack = snd $ pushList
-                   (reverse . map makeLevOneObj $ indexing (map getPrmName l) 0) st
+    (NLFunc (FuncDefinition name p $ fst statement) nl, snd statement)
+    where stack =
+           snd $ pushList
+            (reverse . (++) [Obj "" 1 Param 0] . map makeLevOneObj
+             $ indexing (map getPrmName l) 0) st
           statement = makeSemanticTreeS (s, stack)
           makeLevOneObj :: (String, Integer) -> Obj
           makeLevOneObj (nam, off) = Obj nam 1 Param off
           getPrmName :: Expr -> String
           getPrmName (ParamDclr (Declarator s)) = s
+          vars = filter (\ o -> kind o == Var) $ snd statement
+          nl | length vars == 0 = 0
+             | otherwise = (*) 4 .(+) 1 . maximum . map offset $ vars
 semanticAnalysis (extern, st) = (extern, st)
 
 makeSemanticTreeS :: (Statement, [Obj]) -> (Statement, [Obj])
 makeSemanticTreeS (statement@(CompoundStt e s), st) =
-    (CompoundStt (fst expr) (fst $ makeSemanticTreeS (s, snd expr)), snd expr)
+    (CompoundStt (fst expr) (fst statement),
+     st ++ (snd expr) ++ (snd statement))
     where expr = makeSemanticTreeE (e, st)
+          statement = makeSemanticTreeS (s, snd expr)
 makeSemanticTreeS (statement@(If e s), st) =
-    (If (fst $ makeSemanticTreeE (e, st)) . fst . makeSemanticTreeS $ (s, st), st)
+    (If (fst expr) . fst $ statement, st ++ (snd expr) ++ (snd statement))
+    where expr = makeSemanticTreeE (e, st)
+          statement = makeSemanticTreeS (s, st)
 makeSemanticTreeS (statement@(IfElse e s1 s2), st) =
-    (IfElse (fst $ makeSemanticTreeE (e, st))
-            (fst $ makeSemanticTreeS (s1, st)) . fst . makeSemanticTreeS $ (s2, st),
-     st)
+    (IfElse (fst expr)
+            (fst statement1) . fst $ statement2,
+     st ++ (snd expr) ++ (snd statement1) ++ (snd statement2))
+    where expr = makeSemanticTreeE (e, st)
+          statement1 = makeSemanticTreeS (s1, st)
+          statement2 = makeSemanticTreeS (s2, st)
 makeSemanticTreeS (statement@(While e s), st) =
-    (While (fst $ makeSemanticTreeE (e, st)) . fst . makeSemanticTreeS $ (s, st), st)
+    (While (fst expr) . fst $ statement, st ++ (snd expr) ++ (snd statement))
+    where expr = makeSemanticTreeE (e, st)
+          statement = makeSemanticTreeS (s, st)
 makeSemanticTreeS (statement@(Solo e), st) =
-    ((Solo . fst . makeSemanticTreeE $ (e, st)), st)
+    (Solo . fst $ expr, st ++ (snd expr))
+    where expr = makeSemanticTreeE (e, st)
 makeSemanticTreeS (statement@(Return e), st) =
-    ((Return . fst . makeSemanticTreeE $ (e, st)), st)
+    (Return . fst $ expr, st ++ snd expr)
+    where expr = makeSemanticTreeE (e, st)
 makeSemanticTreeS (statement@(SttList l), st) =
-    (SttList (map makeTree l), st)
+    (SttList (map makeTree l), st ++ (foldr (++) [] $ map makeTreeSt l))
     where makeTree :: Statement -> Statement
           makeTree s = fst $ makeSemanticTreeS (s, st)
+          makeTreeSt :: Statement -> [Obj]
+          makeTreeSt s = snd $ makeSemanticTreeS (s, st)
 makeSemanticTreeS (statement, st) = (statement, st)
 
 makeSemanticTreeE :: (Expr, [Obj]) -> (Expr, [Obj])
 makeSemanticTreeE (expr@(DeclarationList l), st) =
     (expr,
-     snd $ pushList (map makeObjFromCouple $ reverseIndexing
+     snd $ pushList (reverse . map makeObjFromCouple $ indexing
       (foldr (++) [] $ map showList l) stackOff) st)
     where --これからスタックに積むオブジェクトのlevel
-          stackLev | length st == 0 = 0
+          stackLev | length st == 0 = 2
+                   | kind (head st) == Param = 2
                    | otherwise = (+) 1 . lev . head $ st
           --これからスタックに積むオブジェクトのoffsetの始点
           stackOff | length st == 0 = 0
+                   | kind (head st) == Param = 0
                    | otherwise = (+) 1 . offset . head $ st
           makeObjFromCouple :: (String, Integer) -> Obj
           makeObjFromCouple (nam, off) = Obj nam stackLev Var off
@@ -523,11 +675,13 @@ makeSemanticTreeE (expr@(DeclarationList l), st) =
 makeSemanticTreeE (Ident s, st) =
     case searchStack st s of
         Just obj -> (Object obj, st)
-        Nothing -> (UnDefVar s, st)
+        Nothing -> (UnDefVar s, st ++ [Obj s 0 Err 0])
 makeSemanticTreeE (Minus e, st) =
-    (Minus . fst . makeSemanticTreeE $ (e, st), st)
-makeSemanticTreeE (Parenthesis e, st) =
-    (Parenthesis . fst . makeSemanticTreeE $ (e, st), st)
+    makeSemanticTreeE_1op Minus e st
+
+makeSemanticTreeE ((TwoOp op e1 e2), st) =
+    makeSemanticTreeE_2op (TwoOp op) e1 e2 st
+{--
 makeSemanticTreeE ((Mul e1 e2), st) =
     makeSemanticTreeE_2op Mul e1 e2 st
 makeSemanticTreeE ((Div e1 e2), st) =
@@ -556,7 +710,7 @@ makeSemanticTreeE ((Asgn e1 e2), st) =
     makeSemanticTreeE_2op Asgn e1 e2 st
 makeSemanticTreeE ((Exprssn e1 e2), st) =
     makeSemanticTreeE_2op Exprssn e1 e2 st
-
+--}
 makeSemanticTreeE ((PostfixExpr e1@(Ident s) e2@(ArguExprList l)), st) =
     case foundObj of
         Nothing -> makePostfixExpr UnDefFun
@@ -565,31 +719,46 @@ makeSemanticTreeE ((PostfixExpr e1@(Ident s) e2@(ArguExprList l)), st) =
     where numOfArgu = fromIntegral $ length l
           foundObj = searchStack st s
           analysisedArgList = fst $ makeSemanticTreeE (e2, st)
+          analysisedArgListSt = snd $ makeSemanticTreeE (e2, st)
           makePostfixExpr :: ObjKind -> (Expr, [Obj])
+          makePostfixExpr UnDefFun =
+           (PostfixExpr (Object $ Obj s 0 UnDefFun numOfArgu) analysisedArgList,
+            st ++  [Obj s 0 Err 0] ++ analysisedArgListSt)
           makePostfixExpr k =
-           (PostfixExpr (Object $ Obj s 0 k numOfArgu) analysisedArgList, st)
+           (PostfixExpr (Object $ Obj s 0 k numOfArgu) analysisedArgList,
+            st ++ analysisedArgListSt)
 
 makeSemanticTreeE (ArguExprList l, st) =
-    (ArguExprList $ map makeTree l,st)
+    (ArguExprList $ map makeTree l,st ++ (foldr (++) [] $ map makeTreeSt l))
     where makeTree :: Expr -> Expr
           makeTree e = fst $ makeSemanticTreeE (e, st)
+          makeTreeSt :: Expr -> [Obj]
+          makeTreeSt e = snd $ makeSemanticTreeE (e, st)
 
 makeSemanticTreeE (expr, st) = (expr, st)
+
+makeSemanticTreeE_1op :: (Expr -> Expr) -> Expr -> [Obj]
+                          -> (Expr, [Obj])
+makeSemanticTreeE_1op constructor e st =
+    (constructor (fst expr), st ++ (snd expr))
+    where expr = makeSemanticTreeE (e, st)
 
 makeSemanticTreeE_2op :: (Expr -> Expr -> Expr) -> Expr -> Expr -> [Obj]
                           -> (Expr, [Obj])
 makeSemanticTreeE_2op constructor e1 e2 st =
-    ((constructor (fst $ makeSemanticTreeE (e1, st))
-                  (fst $ makeSemanticTreeE (e2, st))), st)
+    (constructor (fst expr1) (fst expr2),
+     st ++ (snd expr1) ++ (snd expr2))
+    where expr1 = makeSemanticTreeE (e1, st)
+          expr2 = makeSemanticTreeE (e2, st)
 
 makeSemanticTreeE_lst :: ([Expr] -> Expr) -> [Expr] -> [Obj]
                           -> (Expr, [Obj])
 makeSemanticTreeE_lst constructor l st =
-    ((constructor $ map makeTree l), st)
+    ((constructor $ map makeTree l), st ++ (foldr (++) [] $ map makeTreeSt l))
     where makeTree :: Expr -> Expr
           makeTree e = fst $ makeSemanticTreeE (e, st)
-
-
+          makeTreeSt :: Expr -> [Obj]
+          makeTreeSt e = snd $ makeSemanticTreeE (e, st)
 
 
 varObj :: String -> Integer -> Integer -> Obj
@@ -600,9 +769,11 @@ searchStack [] _ = Nothing
 searchStack (car:cdr) ident | name car == ident = Just car
                             | otherwise         = searchStack cdr ident
 
---((ExternFuncDec (FuncDefinition e1 e2 s)), st) = undefined
-    
-
+extractErr :: [Obj] -> [Obj]
+extractErr st = filter isErr st
+    where isErr :: Obj -> Bool
+          isErr (Obj _ _ knd _) | knd == Err = True
+                                | otherwise  = False
 
 checkTreeDuplication :: ExternDclr -> Maybe [String]
 checkTreeDuplication (Program l) =
@@ -657,19 +828,19 @@ extractName :: ExternDclr -> [String]
 extractName (ExternDeclaration (Declaration (DeclaratorList l))) =
     map showVal l
 extractName (ExternFuncDec (FuncDefinition e1 e2 e3)) = [showVal e1]
-extractName (Program l)  = foldr (++) [] $ map extractName l
+extractName (Program l) = foldr (++) [] $ map extractName l
 extractName _ = []
 
 extractDclrName :: ExternDclr -> [String]
 extractDclrName (ExternDeclaration (Declaration (DeclaratorList l))) =
     map showVal l
-extractDclrName (Program l)  = foldr (++) [] $ map extractDclrName l
+extractDclrName (Program l) = foldr (++) [] $ map extractDclrName l
 extractDclrName _ = []
 
 extractFuncName :: ExternDclr -> [(String, Integer)]
 extractFuncName (ExternFuncDec (FuncDefinition e1 (ParamDclrList l) e3)) =
     [(showVal e1, fromIntegral $ length l)]
-extractFuncName (Program l)  = foldr (++) [] $ map extractFuncName l
+extractFuncName (Program l) = foldr (++) [] $ map extractFuncName l
 extractFuncName _ = []
 
 extractNameFromExpr :: Expr -> String
@@ -678,8 +849,8 @@ extractNameFromExpr _ = []
     
 extractNameFromCompound _ = []
 
-maybeCouple ::Eq a => Maybe [a] -> Maybe [a] -> Maybe [a]
-maybeCouple x y = if l == [] then Nothing else Just l
+maybeCouple :: Maybe [a] -> Maybe [a] -> Maybe [a]
+maybeCouple x y = if length l == 0 then Nothing else Just l
     where p = fromMaybe [] x
           q = fromMaybe [] y
           l = p ++ q
