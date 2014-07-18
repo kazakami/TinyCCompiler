@@ -592,13 +592,13 @@ codeGenerateEx (ExternDeclaration (Declaration (DeclaratorList l))) =
     map ((\ nam -> "\tCOMMON\t" ++ nam ++ " 4") . showVal) l
 codeGenerateEx (TagedFunc (FuncDefinition (Declarator name) (ParamDclrList l) s)
                           nl i) =
-    case stackOffset of
+    case stackOffset of {--
         0 ->
             ["\tGLOBAL\t" ++ name,
              name ++ ":"]
             ++ fst generatedS ++
             ["L" ++ name ++ "Ret:\t",
-            "\tret"]
+            "\tret"] --}
         otherwise ->
             ["\tGLOBAL\t" ++ name,
              name ++ ":\tpush\tebp",
