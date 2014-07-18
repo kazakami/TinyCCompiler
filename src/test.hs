@@ -2,7 +2,7 @@ module Main where
 import Control.Monad
 import System.Environment
 import Control.Monad.Error
-import Control.Applicative hiding ((<|>))
+import Control.Applicative hiding ((<|>), many)
 import Data.IORef
 import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
@@ -73,8 +73,9 @@ putPrs parser str = putStr $ prs parser str
 
 main :: IO ()
 main = do
-   input <- getLine
-   prsProgram input
+   input <- getArgs
+   fileData <- readFile $ head input
+   prsProgram fileData
 
 data ObjKind = Fresh
              | Var
@@ -317,6 +318,22 @@ externDeclaration = try (do spaces
                      <|> try (do spaces
                                  p <- funcDef
                                  return (ExternFuncDec p))
+
+blank :: Parser ()
+blank = try (do char ' '
+                return ())
+         <|> try ( do char '\t'
+                      return ())
+         <|> try ( do char '\n'
+                      return ())
+
+blanks :: Parser ()
+blanks = do many blank
+            return ()
+
+blanks1 :: Parser ()
+blanks1 = do many1 blank
+             return ()
 
 funcDef :: Parser FuncDef
 funcDef = do string "int"
