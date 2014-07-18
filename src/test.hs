@@ -647,6 +647,16 @@ codeGenerateS nl fnam idLst i (TagedIfElse tag e s1 s2) =
           labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"if\""
+codeGenerateS nl fnam idLst i (TagedIf tag e s) =
+    (fst cond
+     ++["\tcmp\teax, 0", "\tje\t" ++ "L" ++ fnam ++ show (labelHead+1)] ++ fst gen
+     ++ ["L" ++ fnam ++ show (labelHead+1) ++ ":"]
+     , snd gen ++ snd cond)
+    where gen = codeGenerateS nl fnam (1:idLst) i s
+          cond = codeGenerateSoloExpr nl fnam (0:idLst) e
+          labelHead = case tagSearch i tag of
+                          Just a -> a
+                          Nothing -> error "in generating \"if\""
 codeGenerateS nl fnam idLst i (TagedWhile tag e s) =
     (["L" ++ fnam ++ show (labelHead+1) ++ ":"] ++ fst cond
      ++ ["\tcmp\teax, 0", "\tje\t" ++ "L" ++ fnam ++ show (labelHead+2)] ++ fst gen
