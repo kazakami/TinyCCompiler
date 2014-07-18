@@ -677,7 +677,7 @@ codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Object o2)) =
     (["\tmov\t" ++ objLoc o1 ++ ", " ++ objLoc o2 ++ "\t;SoloAsgn"]
     , [i])
 codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Number n)) =
-    (["\tmov\t" ++ objLoc o1 ++ ", " ++ show n ++ "\t;SoloAsgn"]
+    (["\tmov\tdword\t" ++ objLoc o1 ++ ", " ++ show n ++ "\t;SoloAsgn"]
     , [i])
 codeGenerateSoloExpr i fnam idLst (Asgn (Object o) e) =
     (fst gen ++ ["\tmov\t" ++ objLoc o ++ ", eax\t;SoloAsgn"]
