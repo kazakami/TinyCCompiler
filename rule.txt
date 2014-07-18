@@ -9,8 +9,11 @@ external-declaration:
 declaration:
 	int declarator-list ;
 
+initialised-declarator:
+	declarator( = exprssion)?
+
 declarator-list:
-	(declarator ( , declarator)*)?
+	(initialised-declarator ( , initialised-declarator)*)?
 
 declarator:
 	identifier
@@ -32,6 +35,7 @@ statement:
 	if ( expression ) statement
 	if ( expression ) statement else statement
 	while ( expression ) statement
+	for ( expression ; expression ; expression )
 	return expression ;
 
 compound-statement:
@@ -48,11 +52,16 @@ expression:
 
 ternary-expr:
 	assign-expr
-	expression ? expression : expression
+	assign-expr ? assign-expr : assign-expr
 
 assign-expr:
 	logical-OR-expr
 	identifier = assign-expr
+	identifier += assign-expr
+	identifier -= assign-expr
+	identifier *= assign-expr
+	identifier /= assign-expr
+	identifier %= assign-expr
 
 logical-OR-expr:		
 	logical-AND-expr

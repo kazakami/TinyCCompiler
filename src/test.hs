@@ -161,6 +161,7 @@ data CmpndAsgn = CAAdd
 
 data Expr = Ident String
           | Declarator String
+          | InitDeclarator Expr Expr
           | DeclaratorList [Expr]
           | Declaration Expr
           | DeclarationList [Expr]
@@ -213,6 +214,7 @@ showVal (Ternary e1 e2 e3) =
     "(" ++ showVal e1 ++ " ? " ++ showVal e2 ++ " : " ++ showVal e3 ++ ")"
 showVal (Parenthesis n) = showVal n
 showVal (Declarator s) = s
+showVal (InitDeclarator e1 e2) = showVal e1 ++ "(= " ++ showVal e2 ++ ")"
 showVal (DeclaratorList []) = ""--"(DeclaratorList nil)"
 showVal (DeclaratorList l) = "(DeclaratorList " ++  (unwords $ map showVal l) ++ ")"
 showVal (Declaration n) = "(dclrt " ++ showVal n ++ ")"
@@ -382,8 +384,18 @@ declarator :: Parser Expr
 declarator = do p <- identifier
                 return $ Declarator p
 
+initialisedDeclarator :: Parser Expr
+initialisedDeclarator = try (do p <- declarator
+                                spaces
+                                char '='
+                                spaces
+                                q <- ternaryExpr
+                                spaces
+                                return (InitDeclarator p q))
+                         <|> declarator
+
 declaratorList :: Parser Expr
-declaratorList = do p <- sepBy declarator $ spaces >> char ',' >> spaces
+declaratorList = do p <- sepBy initialisedDeclarator $ spaces >> char ',' >> spaces
                     return $ DeclaratorList p
 
 statementList :: Parser Statement
@@ -451,6 +463,29 @@ statement =
                  spaces 
                  char '('
                  spaces
+                 string "int"
+                 spaces
+                 e1 <- initialisedDeclarator
+                 spaces
+                 char ';'
+                 spaces
+                 e2 <- expression
+                 spaces
+                 char ';'
+                 spaces
+                 e3 <- expression
+                 spaces
+                 char ')'
+                 spaces
+                 s <- statement
+                 spaces
+                 return (CompoundStt 
+                         (DeclarationList [(Declaration (DeclaratorList [extractDclr e1]))]) 
+                         (SttList [(Solo $ extractAsgn e1), (While e2 s (Solo e3) )])))
+     <|> try (do string "for"
+                 spaces 
+                 char '('
+                 spaces
                  e1 <- expression
                  spaces
                  char ';'
@@ -476,6 +511,11 @@ statement =
      <|> try (do p <- compoundStatement
                  spaces
                  return p)
+    where extractDclr :: Expr -> Expr
+          extractDclr (InitDeclarator d _) = d
+          extractDclr _ = undefined
+          extractAsgn :: Expr -> Expr
+          extractAsgn (InitDeclarator (Declarator s) e) = (Asgn (Ident s) e)
 
 expression :: Parser Expr
 expression = do p <- sepBy ternaryExpr $ spaces >> char ',' >> spaces
@@ -626,7 +666,28 @@ compoundStatement = try (do char '{'
                             spaces
                             char '}'
                             spaces
-                            return (CompoundStt p q))
+                            return (initialise $ CompoundStt p q))
+    where initialise :: Statement -> Statement
+          initialise (CompoundStt (DeclarationList dl) (SttList sl)) =
+              let dclr = map extractDclrtn dl
+              in CompoundStt (DeclarationList $ map fst dclr)
+                  . SttList $ [Solo . Exprssn . concat $ map snd dclr] ++ sl
+          initialise _ = undefined
+          extractDclrtn :: Expr -> (Expr, [Expr])
+          extractDclrtn (Declaration (DeclaratorList l)) =
+              (Declaration . DeclaratorList $ map extractDclr l
+              , map initToAsgn $ filter isInit l)
+          extractDclrtn _ = undefined
+          initToAsgn :: Expr -> Expr
+          initToAsgn (InitDeclarator (Declarator s) e) = (Asgn (Ident s) e)
+          initToAsgn _ = undefined
+          isInit :: Expr -> Bool
+          isInit (InitDeclarator _ _) = True
+          isInit _ = False
+          extractDclr :: Expr -> Expr
+          extractDclr e@(Declarator _) = e
+          extractDclr (InitDeclarator e _) = e
+          extractDclr _ = undefined
 
 prsProgram :: String -> IO ()
 prsProgram str = case parse program "TinyC" str of
@@ -1218,10 +1279,10 @@ makeSemanticTreeE ((CallFunc e1@(Ident s) e2@(ArguExprList l)), st) =
           makeCallFunc :: ObjKind -> (Expr, [Obj])
           makeCallFunc UnDefFun =
            (CallFunc (Object $ Obj s 0 UnDefFun numOfArgu) analysisedArgList,
-            st ++ [Obj s 0 UnDefFun 0] ++ analysisedArgListSt)
+            st ++  [Obj s 0 UnDefFun 0] ++ analysisedArgListSt)
           makeCallFunc k =
            (CallFunc (Object $ Obj s 0 k numOfArgu) analysisedArgList,
-            st ++ [Obj s 0 k numOfArgu] ++ analysisedArgListSt)
+            st ++ analysisedArgListSt)
 
 makeSemanticTreeE (ArguExprList l, st) =
     (ArguExprList $ map makeTree l,st ++ (foldr (++) [] $ map makeTreeSt l))
