@@ -186,8 +186,8 @@ data Statement = Non
                | TagedIf [Integer] Expr Statement
                | IfElse Expr Statement Statement
                | TagedIfElse [Integer] Expr Statement Statement
-               | While Expr Statement
-               | TagedWhile [Integer] Expr Statement
+               | While Expr Statement Statement
+               | TagedWhile [Integer] Expr Statement Statement
                | Break
                | TagedBreak [Integer]
                | Continue
@@ -248,16 +248,21 @@ showStatement (If e s) = "(if " ++ showVal e ++ " " ++ showStatement s ++ ")"
 showStatement (IfElse e s1 s2) = "(if " ++ showVal e ++ " " ++
                                  showStatement s1 ++ " " ++
                                  showStatement s2 ++ ")"
-showStatement (While e s) = "(while (" ++ showVal e ++ ")" ++
-                            showStatement s ++ ")"
+showStatement (While e s Non) = "(while (" ++ showVal e ++ ")" ++
+                               showStatement s ++ ")"
+showStatement (While e s sUp) = "(while (" ++ showVal e ++ ")" ++
+                                showStatement s ++ " " ++ showStatement sUp ++ ")"
 showStatement (TagedIf i e s) =
     "(tif " ++ show i ++ " " ++ showVal e ++ " " ++ showStatement s ++ ")"
 showStatement (TagedIfElse i e s1 s2) =
     "(tif " ++ show i ++ " "  ++ showVal e ++ " " ++
      showStatement s1 ++ " " ++ showStatement s2 ++ ")"
-showStatement (TagedWhile i e s) =
+showStatement (TagedWhile i e s Non) =
     "(twhile " ++ show i ++ "(" ++ showVal e ++ ")" ++
      showStatement s ++ ")"
+showStatement (TagedWhile i e s sUp) =
+    "(twhile " ++ show i ++ "(" ++ showVal e ++ ")" ++
+     showStatement s ++ " " ++ showStatement sUp ++ ")"
 showStatement (Break) = "(break)"
 showStatement (TagedBreak i) = "(tBreak " ++ show i ++ ")"
 showStatement (Continue) = "(continue)"
@@ -441,7 +446,26 @@ statement =
                  spaces
                  s <- statement
                  spaces
-                 return (While e s))
+                 return (While e s Non))
+     <|> try (do string "for"
+                 spaces 
+                 char '('
+                 spaces
+                 e1 <- expression
+                 spaces
+                 char ';'
+                 spaces
+                 e2 <- expression
+                 spaces
+                 char ';'
+                 spaces
+                 e3 <- expression
+                 spaces
+                 char ')'
+                 spaces
+                 s <- statement
+                 spaces
+                 return (SttList [(Solo e1), (While e2 s (Solo e3) )]))
      <|> try (do string "return"
                  spaces
                  e <- expression
@@ -479,7 +503,41 @@ assignExpr = try (do p <- ident
                      q <- assignExpr
                      spaces
                      return (Asgn p q))
---              <|> (
+              <|> try (do p <- ident
+                          spaces
+                          string "+="
+                          spaces
+                          q <- assignExpr
+                          spaces
+                          return (Asgn p (TwoOp Add p q)))
+              <|> try (do p <- ident
+                          spaces
+                          string "-="
+                          spaces
+                          q <- assignExpr
+                          spaces
+                          return (Asgn p (TwoOp Sub p q)))
+              <|> try (do p <- ident
+                          spaces
+                          string "*="
+                          spaces
+                          q <- assignExpr
+                          spaces
+                          return (Asgn p (TwoOp Mul p q)))
+              <|> try (do p <- ident
+                          spaces
+                          string "/="
+                          spaces
+                          q <- assignExpr
+                          spaces
+                          return (Asgn p (TwoOp Div p q)))
+              <|> try (do p <- ident
+                          spaces
+                          string "%="
+                          spaces
+                          q <- assignExpr
+                          spaces
+                          return (Asgn p (TwoOp Mod p q)))
               <|> rightExpr
 
 primaryExpr :: Parser Expr
@@ -490,6 +548,26 @@ primaryExpr =
             char ')'
             spaces
             return p) --Parenthesis
+     <|> try(do p <- ident
+                spaces
+                string "++"
+                spaces
+                return (Exprssn [(Asgn p (TwoOp Add p (Number 1))), (TwoOp Sub p (Number 1))]))
+     <|> try(do p <- ident
+                spaces
+                string "--"
+                spaces
+                return (Exprssn [(Asgn p (TwoOp Sub p (Number 1))), (TwoOp Add p (Number 1))]))
+     <|> try(do string "++"
+                spaces
+                p <- ident
+                spaces
+                return (Asgn p (TwoOp Add p (Number 1))))
+     <|> try(do string "--"
+                spaces
+                p <- ident
+                spaces
+                return (Asgn p (TwoOp Sub p (Number 1))))
      <|> number
      <|> ident
 
@@ -524,11 +602,16 @@ postfixExpr = try (do p <- ident
 
 unaryExpr :: Parser Expr
 unaryExpr = postfixExpr
-             <|> do _ <- char '-'
-                    spaces
-                    p <- unaryExpr
-                    spaces
-                    return $ Minus p
+             <|> try (do _ <- char '-'
+                         spaces
+                         p <- unaryExpr
+                         spaces
+                         return $ Minus p)
+             <|> try (do _ <- char '+'
+                         spaces
+                         p <- unaryExpr
+                         spaces
+                         return p)
 
 arguExprList :: Parser Expr
 arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
@@ -657,7 +740,7 @@ codeGenerateS nl fnam idLst i (TagedIf tag e s) =
           labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"if\""
-codeGenerateS nl fnam idLst i (TagedWhile tag e s) =
+codeGenerateS nl fnam idLst i (TagedWhile tag e s Non) =
     (["L" ++ fnam ++ show (labelHead+1) ++ ":"] ++ fst cond
      ++ ["\tcmp\teax, 0", "\tje\t" ++ "L" ++ fnam ++ show (labelHead+2)] ++ fst gen
      ++ ["\tjmp\t" ++ "L" ++ fnam ++ show (labelHead+1)
@@ -668,13 +751,27 @@ codeGenerateS nl fnam idLst i (TagedWhile tag e s) =
           labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"while\""
+codeGenerateS nl fnam idLst i (TagedWhile tag e s1 s2) =
+    (["L" ++ fnam ++ show (labelHead+1) ++ ":"] ++ fst cond
+     ++ ["\tcmp\teax, 0", "\tje\t" ++ "L" ++ fnam ++ show (labelHead+2)] ++ fst gen
+     ++ ["L" ++ fnam ++ show (labelHead+3) ++ ":"]
+     ++ fst genUpdate
+     ++ [ "\tjmp\t" ++ "L" ++ fnam ++ show (labelHead+1)
+         , "L" ++ fnam ++ show (labelHead+2) ++ ":"]
+     , snd gen ++ snd cond)
+    where gen = codeGenerateS nl fnam (1:idLst) i s1
+          genUpdate = codeGenerateS nl fnam (2:idLst) i s2
+          cond = codeGenerateSoloExpr nl fnam (0:idLst) e
+          labelHead = case tagSearch i tag of
+                          Just a -> a
+                          Nothing -> error "in generating \"while\""
 codeGenerateS nl fnam idLst i (TagedBreak tag) =
-    (["\tjmp\tL" ++ fnam ++ show (labelHead+2) ++ ":"], [])
+    (["\tjmp\tL" ++ fnam ++ show (labelHead+2) ++ ";break"], [])
     where labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"break\""
 codeGenerateS nl fnam idLst i (TagedContinue tag) =
-    (["\tjmp\tL" ++ fnam ++ show (labelHead+1) ++ ":"], [])
+    (["\tjmp\tL" ++ fnam ++ show (labelHead+3) ++ ";continue"], [])
     where labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"break\""
@@ -683,9 +780,11 @@ codeGenerateS _ _ _ _ s = error $ showStatement s
 
 codeGenerateSoloExpr :: Integer -> String -> [Integer] -> Expr -> ([String], [Integer])
 --代入式のコード生成
+{--
 codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Object o2)) =
     (["\tmov\t" ++ objLoc o1 ++ ", " ++ objLoc o2 ++ "\t;SoloAsgn"]
     , [i])
+--}
 codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Number n)) =
     (["\tmov\tdword\t" ++ objLoc o1 ++ ", " ++ show n ++ "\t;SoloAsgn"]
     , [i])
@@ -699,17 +798,19 @@ codeGenerateSoloExpr i fnam idLst e = codeGenerateE i fnam idLst e
 --第三引数はラベル識別に使う値
 codeGenerateE :: Integer -> String -> [Integer] -> Expr -> ([String], [Integer])
 codeGenerateE i fnam idLst (Number n) =
-    ([(emit OpMOV "" eax $ show n) ++ "\t\t;Number"]
+    ([(emitd OpMOV "" eax $ show n) ++ "\t\t;Number"]
      , [i])
 codeGenerateE i fnam idLst (Object o) =
-    ([(emit OpMOV "" eax $ objLoc o)
+    ([(emitd OpMOV "" eax $ objLoc o)
        ++ "\t;LoadObject"]
      , [i])
 --代入式のコード生成
+{--
 codeGenerateE i fnam idLst (Asgn (Object o1) (Object o2)) =
     (["\tmov\t" ++ objLoc o1 ++ ", " ++ objLoc o2
      , "\tmov\teax, " ++ objLoc o1 ++ "\t;Asgn"]
-    , [i])
+   , [i])
+--}
 codeGenerateE i fnam idLst (Asgn (Object o1) (Number n)) =
     (["\tmov\t" ++ objLoc o1 ++ ", " ++ show n, "\tmov\teax, " ++ show n ++ "\t;Asgn"]
     , [i])
@@ -727,20 +828,20 @@ codeGenerateE i fnam idLst (TwoOp NE e1 e2) = codeGenerateCmp "ne" fnam idLst i 
 --論理演算子のコード生成
 codeGenerateE i fnam idLst (TwoOp And e1 e2) =
     (["\tmov dword\t" ++ (tmpVar i) ++ ", 0"]
-     ++ fst gen1 ++ ["\tcmp\teax, 0", "\tje\tLlgc" ++ showIdentList idLst]
-     ++ fst gen2 ++ ["\tcmp\teax, 0", "\tje\tLlgc" ++ showIdentList idLst]
+     ++ fst gen1 ++ ["\tcmp\teax, 0", "\tje\tLlgc" ++ showIdentList idLst ++ fnam]
+     ++ fst gen2 ++ ["\tcmp\teax, 0", "\tje\tLlgc" ++ showIdentList idLst ++ fnam]
      ++ ["\tmov dword\t" ++ (tmpVar i) ++ ", 1"
-         , "Llgc" ++ showIdentList idLst ++ ":"
+         , "Llgc" ++ showIdentList idLst ++ fnam ++ ":"
          , "\tmov\teax, " ++ (tmpVar i)]
      , snd gen1 ++ snd gen2)
     where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
           gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
 codeGenerateE i fnam idLst (TwoOp Or e1 e2) =
     (["\tmov dword\t" ++ (tmpVar i) ++ ", 1"]
-     ++ fst gen1 ++ ["\tcmp\teax, 0", "\tjne\tLlgc" ++ showIdentList idLst]
-     ++ fst gen2 ++ ["\tcmp\teax, 0", "\tjne\tLlgc" ++ showIdentList idLst]
+     ++ fst gen1 ++ ["\tcmp\teax, 0", "\tjne\tLlgc" ++ showIdentList idLst ++ fnam]
+     ++ fst gen2 ++ ["\tcmp\teax, 0", "\tjne\tLlgc" ++ showIdentList idLst ++ fnam]
      ++ ["\tmov dword\t" ++ (tmpVar i) ++ ", 0"
-         , "Llgc" ++ showIdentList idLst ++ ":"
+         , "Llgc" ++ showIdentList idLst ++ fnam ++ ":"
          , "\tmov\teax, " ++ (tmpVar i)]
      , snd gen1 ++ snd gen2)
     where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
@@ -811,16 +912,18 @@ codeGenerateE i fnam idLst (CallFunc (Object o) (ArguExprList l)) =
     where codeL = map codeGen labeled
           codeGen :: (Expr, Integer) -> ([String], [Integer])
           codeGen ((Number n), _) = (["\tpush\t" ++ show n], [i])
-          codeGen ((Object o), _) = (["\tpush\t" ++ objLoc o], [i])
+          codeGen ((Object o), _) = (["\tpush\tdword\t" ++ objLoc o], [i])
           codeGen e = let tuple = codeGenerateE i fnam ((snd e):idLst) . fst $ e
                       in (fst tuple ++ ["\tpush\teax"], snd tuple)
           labeled = indexing l 1
 codeGenerateE i fnam idLst (Exprssn l) = 
-    (foldr (++) [] . map fst . reverse $ codeL
-     ,foldr (++) [] . map snd $ codeL)
+    (foldr (++) [] . map fst $ codeL
+    , foldr (++) [] . map snd $ codeL)
     where codeL = map (\ expr -> codeGenerateSoloExpr i fnam ((snd expr):idLst) . fst $ expr)
                       labeled
           labeled = indexing l 1
+codeGenerateE i fnam idLst (Minus e) =
+    codeGenerateE i fnam idLst (TwoOp Sub (Number 0) e)
 codeGenerateE _ _ _ e = error $ showVal e ++ " in code Gen"
 
 objLoc :: Obj -> String
@@ -843,11 +946,13 @@ codeGenerateCmp opr fnam idLst i (Object o) (Number n) =
      ++ ["\tset" ++ opr ++ "\tal"]
      ++ ["\tmovzx\teax, al"]
     , [])
+{--
 codeGenerateCmp opr fnam idLst i (Object o1) (Object o2) =
-    (["\tcmp\tdword\t" ++ (objLoc o1) ++ ", " ++ objLoc o2]
+    (["\tcmp\dwordt" ++ (objLoc o1) ++ ", " ++ objLoc o2]
      ++ ["\tset" ++ opr ++ "\tal"]
      ++ ["\tmovzx\teax, al"]
     , [])
+--}
 codeGenerateCmp opr fnam idLst i e1 (Number n) =
     (fst gen
      ++ [emit OpCMP "" eax $ show n]
@@ -905,6 +1010,11 @@ emit op l e1 e2 = case asmToStr op of
                       Just a -> l ++ "\t" ++ a ++ "\t" ++ e1 ++ ", " ++ e2
                       Nothing -> ";No implementation error : " ++ show op
 
+emitd :: AsmOper -> String -> String -> String -> String
+emitd op l e1 e2 = case asmToStr op of
+                      Just a -> l ++ "\t" ++ a ++ "\tdword\t" ++ e1 ++ ", " ++ e2
+                      Nothing -> ";No implementation error : " ++ show op
+
 emitOp2 :: Op2 -> String -> String -> String -> String
 emitOp2 op label e1 e2 = case asmToOp2 op of
                              Just a -> emit a label e1 e2
@@ -947,8 +1057,8 @@ labelTaggingBC iLst (TagedIf i e s) =
     (TagedIf i e $ labelTaggingBC iLst s)
 labelTaggingBC iLst (TagedIfElse i e s1 s2) =
     (TagedIfElse i e (labelTaggingBC iLst  s1) $ labelTaggingBC iLst s2)
-labelTaggingBC _ (TagedWhile i e s) =
-    (TagedWhile i e $ labelTaggingBC i s)
+labelTaggingBC _ (TagedWhile i e s1 s2) =
+    (TagedWhile i e (labelTaggingBC i s1) $ labelTaggingBC i s2)
 labelTaggingBC iLst (SttList l) =
     (SttList $ map (labelTaggingBC iLst) l)
 labelTaggingBC [] (Break) =
@@ -972,9 +1082,10 @@ labelTaggingS (IfElse e s1 s2) i =
     (TagedIfElse i e (fst tag1) (fst tag2), (i,2):(snd tag1 ++ snd tag2))
     where tag1 = labelTaggingS s1 $ 1:i
           tag2 = labelTaggingS s2 $ 2:i
-labelTaggingS (While e s) i =
-    (TagedWhile i e (fst tag), (i,2):(snd tag))
-    where tag = labelTaggingS s $ 2:i
+labelTaggingS (While e s1 s2) i =
+    (TagedWhile i e (fst tag) (fst tagUpdate), (i,3):(snd tag))
+    where tag = labelTaggingS s1 $ 2:i
+          tagUpdate = labelTaggingS s2 $ 3:i
 labelTaggingS (SttList l) i =
     (SttList $ map fst labeled, foldr (++) [] $ map snd labeled)
     where labeling :: (Statement, Integer) -> (Statement, [([Integer], Integer)])
@@ -1038,10 +1149,12 @@ makeSemanticTreeS (statement@(IfElse e s1 s2), st) =
     where expr = makeSemanticTreeE (e, st)
           statement1 = makeSemanticTreeS (s1, st)
           statement2 = makeSemanticTreeS (s2, st)
-makeSemanticTreeS (statement@(While e s), st) =
-    (While (fst expr) . fst $ statement, st ++ (snd expr) ++ (snd statement))
+makeSemanticTreeS (statement@(While e s1 s2), st) =
+    (While (fst expr) (fst statement) (fst sttUpdate)
+     , st ++ (snd expr) ++ (snd statement) ++ (snd sttUpdate))
     where expr = makeSemanticTreeE (e, st)
-          statement = makeSemanticTreeS (s, st)
+          statement = makeSemanticTreeS (s1, st)
+          sttUpdate = makeSemanticTreeS (s2, st)
 makeSemanticTreeS (statement@(Solo e), st) =
     (Solo . fst $ expr, st ++ (snd expr))
     where expr = makeSemanticTreeE (e, st)
@@ -1105,10 +1218,10 @@ makeSemanticTreeE ((CallFunc e1@(Ident s) e2@(ArguExprList l)), st) =
           makeCallFunc :: ObjKind -> (Expr, [Obj])
           makeCallFunc UnDefFun =
            (CallFunc (Object $ Obj s 0 UnDefFun numOfArgu) analysisedArgList,
-            st ++  [Obj s 0 UnDefFun 0] ++ analysisedArgListSt)
+            st ++ [Obj s 0 UnDefFun 0] ++ analysisedArgListSt)
           makeCallFunc k =
            (CallFunc (Object $ Obj s 0 k numOfArgu) analysisedArgList,
-            st ++ analysisedArgListSt)
+            st ++ [Obj s 0 k numOfArgu] ++ analysisedArgListSt)
 
 makeSemanticTreeE (ArguExprList l, st) =
     (ArguExprList $ map makeTree l,st ++ (foldr (++) [] $ map makeTreeSt l))
@@ -1172,7 +1285,7 @@ extractKindObj objKind st = filter isKnd st
           isKnd (Obj _ _ knd _) | knd == objKind = True
                                 | otherwise      = False
 
-extractErr = extractKindObj Err
+extractErr o = (extractKindObj Err o) ++ (extractKindObj PrmNumNonMathedFunc o)
 extractUnDefFunc = extractKindObj UnDefFun
 
 checkTreeDuplication :: ExternDclr -> Maybe [String]
@@ -1195,7 +1308,8 @@ checkSttDuplication (If e s) = checkSttDuplication s
 checkSttDuplication (IfElse e s1 s2) =
     maybeCouple (duplication $ extractDclrFromStt s1)
     . duplication . extractDclrFromStt $ s2
-checkSttDuplication (While e s) = checkSttDuplication s
+checkSttDuplication (While e s sUp) =
+    maybeCouple (checkSttDuplication s) (checkSttDuplication sUp)
 checkSttDuplication (SttList l) =
     foldr maybeCouple Nothing $ map checkSttDuplication l
 checkSttDuplication _ = Nothing
@@ -1283,13 +1397,13 @@ constEvalS (IfElse e s1 s2) =
           constIfElse (IfElse (Number 0) s1 s2) = s2
           constIfElse (IfElse (Number _) s1 s2) = s1
           constIfElse s@(IfElse _ _ _) = s
-constEvalS (While e s) =
-    constWhile . While evaledE $ constEvalS s
+constEvalS (While e s sUp) =
+    constWhile $ While evaledE (constEvalS s) (constEvalS sUp)
     where evaledE = constEvalE e
           constWhile :: Statement -> Statement
-          constWhile (While (Exprssn []) _) = error "condition of if is empty"
-          constWhile (While (Number 0) _) = Non
-          constWhile s@(While _ _) = s
+          constWhile (While (Exprssn []) _ _) = error "condition of if is empty"
+          constWhile (While (Number 0) _ _) = Non
+          constWhile s@(While _ _ _) = s
 constEvalS (Return e) =
     Return $ constEvalE e
 constEvalS (Solo e) = Solo $ constEvalE e
