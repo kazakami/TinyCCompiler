@@ -24,7 +24,8 @@ commentStart = "/*"
            , opStart = opLetter emptyDef
            , opLetter = oneOf ":!#$%&*+./<=>?@\\^|-~"
            , reservedOpNames= []
-           , reservedNames = ["if", "else", "while", "return", "int", "void"]
+           , reservedNames = ["if", "else", "while", "return", "int", "void"
+                              , "break", "continue"]
            , caseSensitive = True
            }
 
@@ -73,7 +74,7 @@ putPrs parser str = putStr $ prs parser str
 main :: IO ()
 main = do
    input <- getLine
-   putStrLn $ prs program input
+   prsProgram input
 
 data ObjKind = Fresh
              | Var
@@ -93,24 +94,55 @@ data Obj = Obj { name::String,
 data Op2 = Non2
          | Mul
          | Div
+         | Mod
          | Add
          | Sub
          | GrTh
          | GrEq
          | LsTh
          | LsEq
+         | ShL
+         | ShR
          | Eq
          | NE
          | And
-         | Or
-         | Asgn deriving (Show, Eq)
+         | Or deriving (Show, Eq)
 
 --Op2と演算子の対応
 op2OperationTable =
     [(Mul, (*)),
      (Div, div),
      (Add, (+)),
-     (Sub, (-))]
+     (Sub, (-)),
+     (Mod, (mod)),
+     (Eq, equal),
+     (NE, neq),
+     (Or, (+)),
+     (And, (*)),
+     (GrTh, grTh),
+     (GrEq, grEq),
+     (LsTh, lsTh),
+     (LsEq, lsEq)]
+    where b2i :: Bool -> Integer
+          b2i b = if b then 1 else 0
+          equal :: Integer -> Integer -> Integer
+          equal x y | x == y = 1
+                    | otherwise = 0
+          neq :: Integer -> Integer -> Integer
+          neq x y | x /= y = 1
+                  | otherwise = 0
+          grTh :: Integer -> Integer -> Integer
+          grTh x y | x > y = 1
+                   | otherwise = 0
+          grEq :: Integer -> Integer -> Integer
+          grEq x y | x >= y = 1
+                   | otherwise = 0
+          lsTh :: Integer -> Integer -> Integer
+          lsTh x y | x < y = 1
+                   | otherwise = 0
+          lsEq :: Integer -> Integer -> Integer
+          lsEq x y | x <= y = 1
+                   | otherwise = 0
 
 searchOp :: Op2 -> Maybe (Integer -> Integer -> Integer)
 searchOp = search op2OperationTable
@@ -120,7 +152,11 @@ searchOp = search op2OperationTable
           search (car:cdr) op | fst car == op = Just $ snd car
                               | otherwise     = search cdr op
 
---引数1の演算
+data CmpndAsgn = CAAdd
+               | CASub
+               | CAMul
+               | CADiv
+               | CAMod deriving Show
 
 data Expr = Ident String
           | Declarator String
@@ -132,6 +168,9 @@ data Expr = Ident String
           | Number Integer
           | Minus Expr
           | TwoOp Op2 Expr Expr
+          | Ternary Expr Expr Expr
+          | Asgn Expr Expr
+          | CompoundAsgn CmpndAsgn Expr Expr
           | Parenthesis Expr
           | ArguExprList [Expr]
           | CallFunc Expr Expr
@@ -148,6 +187,10 @@ data Statement = Non
                | TagedIfElse [Integer] Expr Statement Statement
                | While Expr Statement
                | TagedWhile [Integer] Expr Statement
+               | Break
+               | TagedBreak [Integer]
+               | Continue
+               | TagedContinue [Integer]
                | Return Expr
                | SttList [Statement]
                | CompoundStt Expr Statement
@@ -165,6 +208,8 @@ showVal (Ident s) = s --"(Ident " ++ s ++ ")"
 showVal (Minus n) = "(- " ++ showVal n ++ ")"
 showVal (TwoOp op n1 n2) =
     "(" ++ show op ++ " " ++ showVal n1 ++ " " ++ showVal n2 ++ ")"
+showVal (Ternary e1 e2 e3) =
+    "(" ++ showVal e1 ++ " ? " ++ showVal e2 ++ " : " ++ showVal e3 ++ ")"
 showVal (Parenthesis n) = showVal n
 showVal (Declarator s) = s
 showVal (DeclaratorList []) = ""--"(DeclaratorList nil)"
@@ -191,6 +236,9 @@ showVal (Object o) =
         _ -> "(" ++ name o ++ ":" ++ (show $ lev o) ++ ":" ++ 
               (show $ kind o) ++ ":" ++ (show $ offset o) ++ ")"
 showVal (UnDefVar s) = "(UnDefinedVar " ++ s ++ ")"
+showVal (Asgn e1 e2) = "(setq " ++ showVal e1 ++ " " ++ showVal e2 ++ ")"
+showVal (CompoundAsgn op e1 e2) =
+    "(" ++ show op ++ " = " ++ showVal e1 ++ " " ++ showVal e2 ++ ")"
 
 showStatement :: Statement -> String
 showStatement (Non) = "()"
@@ -209,6 +257,10 @@ showStatement (TagedIfElse i e s1 s2) =
 showStatement (TagedWhile i e s) =
     "(twhile " ++ show i ++ "(" ++ showVal e ++ ")" ++
      showStatement s ++ ")"
+showStatement (Break) = "(break)"
+showStatement (TagedBreak i) = "(tBreak " ++ show i ++ ")"
+showStatement (Continue) = "(continue)"
+showStatement (TagedContinue i) = "(tContinue " ++ show i ++ ")"
 showStatement (Return e) = "(return " ++ showVal e ++ ")"
 showStatement (SttList []) = "(SttList nil)"
 showStatement (SttList l) = "(SttList " ++ (unwords $ map showStatement l) ++ ")"
@@ -233,7 +285,8 @@ showExternDclr (Program l) =
 rightExpr :: Parser Expr
 rightExpr = buildExpressionParser operatorTable unaryExpr
 
-operatorTable = [[op "*" (TwoOp Mul) AssocLeft, op "/" (TwoOp Div) AssocLeft]
+operatorTable = [[op "*" (TwoOp Mul) AssocLeft, op "/" (TwoOp Div) AssocLeft
+                , op "%" (TwoOp Mod) AssocLeft]
                 ,[op "+" (TwoOp Add) AssocLeft, op "-" (TwoOp Sub) AssocLeft]
                 ,[op ">" (TwoOp GrTh) AssocLeft, op ">=" (TwoOp GrEq) AssocLeft
                 , op "<" (TwoOp LsTh) AssocLeft, op "<=" (TwoOp LsEq) AssocLeft]
@@ -266,8 +319,7 @@ externDeclaration = try (do spaces
                                  return (ExternFuncDec p))
 
 funcDef :: Parser FuncDef
-funcDef = do spaces
-             string "int"
+funcDef = do string "int"
              spaces1
              p <- declarator
              spaces
@@ -278,13 +330,14 @@ funcDef = do spaces
              char ')'
              spaces
              s <- compoundStatement
+             spaces
              return $ FuncDefinition p q s
 
 paramDeclaration :: Parser Expr
-paramDeclaration = do spaces
-                      string "int"
+paramDeclaration = do string "int"
                       spaces1
                       p <- declarator
+                      spaces
                       return $ ParamDclr p
 
 paramDeclarationList :: Parser Expr
@@ -296,8 +349,7 @@ declarationList = do p <- sepBy declaration spaces
                      return $  DeclarationList p
 
 declaration :: Parser Expr
-declaration = do spaces
-                 reserved "int"
+declaration = do reserved "int"
                  p <- declaratorList
                  spaces
                  _ <- string ";"
@@ -318,10 +370,19 @@ statementList = do p <- sepBy statement spaces
 
 statement :: Parser Statement
 statement =
-    try (do spaces
-            char ';'
+    try (do char ';'
             spaces
             return (Non))
+     <|> try (do reserved "break"
+                 spaces
+                 char ';'
+                 spaces
+                 return (Break))
+     <|> try (do reserved "continue"
+                 spaces
+                 char ';'
+                 spaces
+                 return (Continue))
      <|> try (do p <- expression
                  spaces
                  _ <- char ';'
@@ -371,29 +432,42 @@ statement =
                  char ';'
                  spaces
                  return (Return e))
-     <|> try (do spaces
-                 p <- compoundStatement
+     <|> try (do p <- compoundStatement
                  spaces
                  return p)
 
 expression :: Parser Expr
-expression = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
+expression = do p <- sepBy ternaryExpr $ spaces >> char ',' >> spaces
                 return $ Exprssn p
 
+ternaryExpr :: Parser Expr
+ternaryExpr = try (do e1 <- assignExpr
+                      spaces
+                      char '?'
+                      spaces
+                      e2 <- assignExpr
+                      spaces
+                      char ':'
+                      spaces
+                      e3 <- assignExpr
+                      spaces
+                      return (Ternary e1 e2 e3))
+               <|> assignExpr
+
 assignExpr :: Parser Expr
-assignExpr = try (do spaces
-                     p <- ident
+assignExpr = try (do p <- ident
                      spaces
                      _ <- char '='
                      spaces
                      q <- assignExpr
-                     return (TwoOp Asgn p q))
+                     spaces
+                     return (Asgn p q))
+--              <|> (
               <|> rightExpr
 
 primaryExpr :: Parser Expr
 primaryExpr =
-    try (do spaces
-            char '('
+    try (do char '('
             spaces 
             p <- expression
             char ')'
@@ -403,56 +477,55 @@ primaryExpr =
      <|> ident
 
 ident :: Parser Expr
-ident = do spaces
-           p <- identifier
+ident = do p <- identifier
+           spaces
            return $ Ident p
 
 number :: Parser Expr
 number = liftM (Number . read) $ many1 digit
 
 num :: Parser Expr
-num = do spaces
-         c <- oneOf digitList
+num = do c <- oneOf digitList
          spaces
          return . Number $ charToInt c
       where
          charToInt c = toInteger (ord c - ord '0')
 
 postfixExpr :: Parser Expr
-postfixExpr = try (do spaces
-                      p <- ident
+postfixExpr = try (do p <- ident
                       spaces
                       char '('
                       spaces
                       q <- arguExprList
                       spaces
                       char ')'
+                      spaces
                       return (CallFunc p q))
-                <|>  try (do spaces
-                             p <- primaryExpr
+                <|>  try (do p <- primaryExpr
+                             spaces
                              return p)
 
 unaryExpr :: Parser Expr
 unaryExpr = postfixExpr
-             <|> do  spaces
-                     _ <- char '-'
-                     spaces
-                     p <- unaryExpr
-                     return $ Minus p
+             <|> do _ <- char '-'
+                    spaces
+                    p <- unaryExpr
+                    spaces
+                    return $ Minus p
 
 arguExprList :: Parser Expr
 arguExprList = do p <- sepBy assignExpr $ spaces >> char ',' >> spaces
                   return $ ArguExprList p
 
 compoundStatement :: Parser Statement
-compoundStatement = try (do spaces
-                            char '{'
+compoundStatement = try (do char '{'
                             spaces
                             p <- declarationList
                             spaces
                             q <- statementList
                             spaces
                             char '}'
+                            spaces
                             return (CompoundStt p q))
 
 prsProgram :: String -> IO ()
@@ -461,20 +534,37 @@ prsProgram str = case parse program "TinyC" str of
     Right val -> case checkTreeDuplication val of
         Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
         Nothing -> 
-            let semanticAnalysised = semanticAnalysis (val, [])                
+            let semanticAnalysised = semanticAnalysis (constEval val, [])
             in case extractErr . snd $ semanticAnalysised of
                 errs@_:_ -> putStrLn . (++) "Err : " . show $ errs
                 [] -> putStrLn . unlines . codeGenerate (snd semanticAnalysised)
                        . labelTagging . fst $ semanticAnalysised
 
-codeGen :: String -> IO ()
-codeGen str = case parse program "TinyC" str of
+taggedProgram :: String -> IO ()
+taggedProgram str = case parse program "TinyC" str of
+    Left err -> putStrLn $ show err
+    Right val -> case checkTreeDuplication val of
+        Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
+        Nothing -> 
+            let semanticAnalysised = semanticAnalysis (constEval val, [])
+            in case extractErr . snd $ semanticAnalysised of
+                errs@_:_ -> putStrLn . (++) "Err : " . show $ errs
+                [] -> putStrLn . show . labelTagging . fst $ semanticAnalysised
+
+
+constEvalProgram :: String -> IO ()
+constEvalProgram str = case parse program "TinyC" str of
     Left err -> putStrLn $ show err
     Right val -> case checkTreeDuplication val of
         Just a -> putStrLn . (++) "Multiple Declaration : " . unwords $ a
         Nothing ->
             let semanticAnalysised = semanticAnalysis (constEval val, [])
             in putStrLn . show  $ fst semanticAnalysised
+
+showTree :: String -> IO ()
+showTree str = case parse program "TinyC" str of
+    Left err -> putStrLn $ show err
+    Right val -> putStrLn $ show val
 
 codeGenerate :: [Obj] -> ExternDclr -> [String]
 codeGenerate o (Program l) =
@@ -490,7 +580,8 @@ codeGenerateEx (TagedFunc (FuncDefinition (Declarator name) (ParamDclrList l) s)
             ["\tGLOBAL\t" ++ name,
              name ++ ":"]
             ++ fst generatedS ++
-            ["L" ++ name ++ "Ret:\tret"]
+            ["L" ++ name ++ "Ret:\t",
+            "\tret"]
         otherwise ->
             ["\tGLOBAL\t" ++ name,
              name ++ ":\tpush\tebp",
@@ -519,12 +610,12 @@ codeGenerateS nl fnam idLst i (SttList l) =
 codeGenerateS nl fnam idLst i (CompoundStt e s) =
     codeGenerateS nl fnam idLst i s
 codeGenerateS nl fnam idLst i (Return e) =
-    (fst generatedE
+    (fst gen
      ++ ["\tjmp\tL" ++ fnam ++ "Ret"]
-     , snd generatedE)
-    where generatedE = codeGenerateE nl fnam idLst e
+     , snd gen)
+    where gen = codeGenerateSoloExpr nl fnam idLst e
 codeGenerateS nl fnam idLst i (Solo e) =
-    codeGenerateE nl fnam idLst e
+    codeGenerateSoloExpr nl fnam idLst e
 codeGenerateS nl fnam idLst i (Non) = ([],[])
 codeGenerateS nl fnam idLst i (TagedIfElse tag e s1 s2) =
     (fst cond
@@ -535,7 +626,7 @@ codeGenerateS nl fnam idLst i (TagedIfElse tag e s1 s2) =
      , snd gen1 ++ snd gen2 ++ snd cond)
     where gen1 = codeGenerateS nl fnam (1:idLst) i s1
           gen2 = codeGenerateS nl fnam (2:idLst) i s2
-          cond = codeGenerateE nl fnam (0:idLst) e
+          cond = codeGenerateSoloExpr nl fnam (0:idLst) e
           labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"if\""
@@ -546,11 +637,36 @@ codeGenerateS nl fnam idLst i (TagedWhile tag e s) =
          , "L" ++ fnam ++ show (labelHead+2) ++ ":"]
      , snd gen ++ snd cond)
     where gen = codeGenerateS nl fnam (1:idLst) i s
-          cond = codeGenerateE nl fnam (0:idLst) e
+          cond = codeGenerateSoloExpr nl fnam (0:idLst) e
           labelHead = case tagSearch i tag of
                           Just a -> a
                           Nothing -> error "in generating \"while\""
+codeGenerateS nl fnam idLst i (TagedBreak tag) =
+    (["\tjmp\tL" ++ fnam ++ show (labelHead+2) ++ ":"], [])
+    where labelHead = case tagSearch i tag of
+                          Just a -> a
+                          Nothing -> error "in generating \"break\""
+codeGenerateS nl fnam idLst i (TagedContinue tag) =
+    (["\tjmp\tL" ++ fnam ++ show (labelHead+1) ++ ":"], [])
+    where labelHead = case tagSearch i tag of
+                          Just a -> a
+                          Nothing -> error "in generating \"break\""
 codeGenerateS _ _ _ _ s = error $ showStatement s
+
+
+codeGenerateSoloExpr :: Integer -> String -> [Integer] -> Expr -> ([String], [Integer])
+--代入式のコード生成
+codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Object o2)) =
+    (["\tmov\t" ++ objLoc o1 ++ ", " ++ objLoc o2 ++ "\t;SoloAsgn"]
+    , [i])
+codeGenerateSoloExpr i fnam idLst (Asgn (Object o1) (Number n)) =
+    (["\tmov\t" ++ objLoc o1 ++ ", " ++ show n ++ "\t;SoloAsgn"]
+    , [i])
+codeGenerateSoloExpr i fnam idLst (Asgn (Object o) e) =
+    (fst gen ++ ["\tmov\t" ++ objLoc o ++ ", eax\t;SoloAsgn"]
+    ,snd gen)
+    where gen = codeGenerateE i fnam idLst e
+codeGenerateSoloExpr i fnam idLst e = codeGenerateE i fnam idLst e
 
 --第一引数は一時変数のスタックの深さを意味する。
 --第三引数はラベル識別に使う値
@@ -558,37 +674,30 @@ codeGenerateE :: Integer -> String -> [Integer] -> Expr -> ([String], [Integer])
 codeGenerateE i fnam idLst (Number n) =
     ([(emit OpMOV "" eax $ show n) ++ "\t\t;Number"]
      , [i])
-codeGenerateE i fnam idLst (Object (Obj nam lev Var off)) =
-    ([(emit OpMOV "" eax $ "[ebp-" ++ (show . (*) 4 . (+) 1 $ off) ++ "]")
-       ++ "\t;Var"]
+codeGenerateE i fnam idLst (Object o) =
+    ([(emit OpMOV "" eax $ objLoc o)
+       ++ "\t;LoadObject"]
      , [i])
-codeGenerateE i fnam idLst (Object (Obj nam lev Param off)) =
-    ([(emit OpMOV "" eax $ "[ebp+" ++ (show . (+) 8 . (*) 4 $ off) ++ "]")
-       ++ "\t;Param"]
-     , [i])
-codeGenerateE i fnam idLst (Object (Obj nam lev Global off)) =
-    ([(emit OpMOV "" eax $ "[" ++ nam ++ "]") ++ "\t;Global"]
-     , [i])
-codeGenerateE i fnam idLst (TwoOp Asgn (Object (Obj nam lev knd off)) e) =
-    case knd of
-        Var ->
-            (fst gen
-             ++ ["\tmov\t[ebp-" ++ (show . (*) 4 . (+) 1 $ off) ++ "], eax\t;AsgnVar"]
-             , snd gen)
-        Param -> 
-            (fst gen
-             ++ ["\tmov\t[ebp+" ++ (show . (+) 8 . (*) 4 $ off) ++ "], eax\t;AsgnPrm"]
-             , snd gen)
-        Global -> 
-            (fst gen ++ ["\tmov\t[" ++ nam ++ "], eax\t;Global"]
-             , snd gen)
+--代入式のコード生成
+codeGenerateE i fnam idLst (Asgn (Object o1) (Object o2)) =
+    (["\tmov\t" ++ objLoc o1 ++ ", " ++ objLoc o2
+     , "\tmov\teax, " ++ objLoc o1 ++ "\t;Asgn"]
+    , [i])
+codeGenerateE i fnam idLst (Asgn (Object o1) (Number n)) =
+    (["\tmov\t" ++ objLoc o1 ++ ", " ++ show n, "\tmov\teax, " ++ show n ++ "\t;Asgn"]
+    , [i])
+codeGenerateE i fnam idLst (Asgn (Object o) e) =
+    (fst gen ++ ["\tmov\t" ++ objLoc o ++ ", eax\t;Asgn"]
+    ,snd gen)
     where gen = codeGenerateE i fnam idLst e
+--比較演算子のコード生成
 codeGenerateE i fnam idLst (TwoOp GrTh e1 e2) = codeGenerateCmp "g" fnam idLst i e1 e2
 codeGenerateE i fnam idLst (TwoOp GrEq e1 e2) = codeGenerateCmp "ge" fnam idLst i e1 e2
 codeGenerateE i fnam idLst (TwoOp LsTh e1 e2) = codeGenerateCmp "l" fnam idLst i e1 e2
 codeGenerateE i fnam idLst (TwoOp LsEq e1 e2) = codeGenerateCmp "le" fnam idLst i e1 e2
 codeGenerateE i fnam idLst (TwoOp Eq e1 e2) = codeGenerateCmp "e" fnam idLst i e1 e2
 codeGenerateE i fnam idLst (TwoOp NE e1 e2) = codeGenerateCmp "ne" fnam idLst i e1 e2
+--論理演算子のコード生成
 codeGenerateE i fnam idLst (TwoOp And e1 e2) =
     (["\tmov dword\t" ++ (tmpVar i) ++ ", 0"]
      ++ fst gen1 ++ ["\tcmp\teax, 0", "\tje\tLlgc" ++ showIdentList idLst]
@@ -609,6 +718,56 @@ codeGenerateE i fnam idLst (TwoOp Or e1 e2) =
      , snd gen1 ++ snd gen2)
     where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
           gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
+--三項演算子のコード生成
+codeGenerateE i fnam idLst (Ternary e1 e2 e3) =
+    (fst gen1 ++ ["\tcmp\teax, 0", "\tje\tLtnr1_" ++ showIdentList idLst] ++ fst gen2
+     ++ ["\tjmp\tLtnr2_" ++ showIdentList idLst, "Ltnr1_" ++ showIdentList idLst ++ ":"]
+     ++ fst gen3 ++ ["Ltnr2_" ++ showIdentList idLst ++ ":"]
+    , snd gen1 ++ snd gen2 ++ snd gen3)
+    where gen1 = codeGenerateE i fnam (1:idLst) e1
+          gen2 = codeGenerateE i fnam (2:idLst) e2
+          gen3 = codeGenerateE i fnam (3:idLst) e3
+--割り算のコード生成
+codeGenerateE i fnam idLst (TwoOp Div e1 (Number n)) =
+    (fst gen ++ ["\tcdq", "\tmov\tdword " ++ tmpVar i ++ ", " ++ show n
+                , "\tidiv\tdword " ++ tmpVar i]
+    , snd gen)
+    where gen = codeGenerateE (i+4)fnam (1:idLst) e1
+codeGenerateE i fnam idLst (TwoOp Div e1 (Object o)) =
+    (fst gen ++ ["\tcdq", "\tidiv\tdword " ++ objLoc o]
+    , snd gen)
+    where gen = codeGenerateE i fnam (1:idLst) e1
+codeGenerateE i fnam idLst (TwoOp Div e1 e2) =
+    (fst gen2 ++ ["\tmov\t" ++ (tmpVar i) ++ ", eax"] ++ fst gen1
+     ++ ["\tcdq", "\tidiv\tdword " ++ (tmpVar i)]
+    , snd gen1 ++ snd gen2)
+    where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
+          gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
+--剰余演算子のコード生成
+codeGenerateE i fnam idLst (TwoOp Mod e1 (Number n)) =
+    (fst gen ++ ["\tcdq", "\tmov\tdword " ++ tmpVar i ++ ", " ++ show n
+                , "\tidiv\tdword " ++ tmpVar i, "\tmov\teax, edx"]
+    , snd gen)
+    where gen = codeGenerateE (i+4)fnam (1:idLst) e1
+codeGenerateE i fnam idLst (TwoOp Mod e1 (Object o)) =
+    (fst gen ++ ["\tcdq", "\tidiv\tdword " ++ objLoc o, "\tmov\teax, edx"]
+    , snd gen)
+    where gen = codeGenerateE i fnam (1:idLst) e1
+codeGenerateE i fnam idLst (TwoOp Mod e1 e2) =
+    (fst gen2 ++ ["\tmov\t" ++ (tmpVar i) ++ ", eax"] ++ fst gen1
+     ++ ["\tcdq", "\tidiv\tdword " ++ (tmpVar i), "\tmov\teax, edx"]
+    , snd gen1 ++ snd gen2)
+    where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
+          gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
+--一般的な二項演算子のコード生成
+codeGenerateE i fnam idLst (TwoOp op e1 (Number n)) =
+    (fst gen1 ++ [emitOp2 op "" eax $ show n]
+    , snd gen1)
+    where gen1 = codeGenerateE i fnam (1:idLst) e1
+codeGenerateE i fnam idLst (TwoOp op e1 (Object o)) =
+    (fst gen1 ++ [emitOp2 op "" eax $ objLoc o]
+    , snd gen1)
+    where gen1 = codeGenerateE i fnam (1:idLst) e1
 codeGenerateE i fnam idLst (TwoOp op e1 e2) =
     (fst gen2
      ++ [emit OpMOV "" (tmpVar i) eax]
@@ -618,19 +777,32 @@ codeGenerateE i fnam idLst (TwoOp op e1 e2) =
     where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
           gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
 codeGenerateE i fnam idLst (CallFunc (Object o) (ArguExprList l)) =
-    ((foldr (++) [] . map (genPush . fst) . reverse $ codeL)
-     ++ ["\tcall\t" ++ name o]
-     ,foldr (++) [] . map snd $ codeL)
-    where codeL = map (\ expr -> codeGenerateE i fnam ((snd expr):idLst) . fst $ expr) labeled
+    ((foldr (++) [] . map fst . reverse $ codeL)
+      ++ ["\tcall\t" ++ name o]
+      ++ ["\tsub\tesp, " ++ show (length l * 4)]
+    ,foldr (++) [] . map snd $ codeL)
+    where codeL = map codeGen labeled
+          codeGen :: (Expr, Integer) -> ([String], [Integer])
+          codeGen ((Number n), _) = (["\tpush\t" ++ show n], [i])
+          codeGen ((Object o), _) = (["\tpush\t" ++ objLoc o], [i])
+          codeGen e = let tuple = codeGenerateE i fnam ((snd e):idLst) . fst $ e
+                      in (fst tuple ++ ["\tpush\teax"], snd tuple)
           labeled = indexing l 1
-          genPush :: [String] -> [String]
-          genPush s = s ++ ["\tpush\teax"]
 codeGenerateE i fnam idLst (Exprssn l) = 
     (foldr (++) [] . map fst . reverse $ codeL
      ,foldr (++) [] . map snd $ codeL)
-    where codeL = map (\ expr -> codeGenerateE i fnam ((snd expr):idLst) . fst $ expr) labeled
+    where codeL = map (\ expr -> codeGenerateSoloExpr i fnam ((snd expr):idLst) . fst $ expr)
+                      labeled
           labeled = indexing l 1
-codeGenerateE _ _ _ e = error $ showVal e
+codeGenerateE _ _ _ e = error $ showVal e ++ " in code Gen"
+
+objLoc :: Obj -> String
+objLoc (Obj _ _ Var off) =
+    "[ebp-" ++ (show . (*) 4 . (+) 1 $ off) ++ "]"
+objLoc (Obj _ _ Param off) =
+    "[ebp+" ++ (show . (+) 8 . (*) 4 $ off) ++ "]"
+objLoc (Obj nam _ Global _) =
+    "[" ++ nam ++ "]"
 
 showIdentList :: [Integer] -> String
 showIdentList [] = []
@@ -639,6 +811,23 @@ showIdentList (car:cdr) = show car ++ showIdentList cdr
 --第三引数はラベル識別に使う値
 codeGenerateCmp :: String -> String -> [Integer] -> Integer -> Expr -> Expr
                     -> ([String], [Integer])
+codeGenerateCmp opr fnam idLst i (Object o) (Number n) =
+    (["\tcmp\tdword\t" ++ (objLoc o) ++ ", " ++ show n]
+     ++ ["\tset" ++ opr ++ "\tal"]
+     ++ ["\tmovzx\teax, al"]
+    , [])
+codeGenerateCmp opr fnam idLst i (Object o1) (Object o2) =
+    (["\tcmp\tdword\t" ++ (objLoc o1) ++ ", " ++ objLoc o2]
+     ++ ["\tset" ++ opr ++ "\tal"]
+     ++ ["\tmovzx\teax, al"]
+    , [])
+codeGenerateCmp opr fnam idLst i e1 (Number n) =
+    (fst gen
+     ++ [emit OpCMP "" eax $ show n]
+     ++ ["\tset" ++ opr ++ "\tal"]
+     ++ ["\tmovzx\teax, al"]
+    , snd gen)
+    where gen = codeGenerateE i fnam (1:idLst) e1
 codeGenerateCmp opr fnam idLst i e1 e2 =
     (fst gen2
      ++ [emit OpMOV "" (tmpVar i) eax]
@@ -646,7 +835,7 @@ codeGenerateCmp opr fnam idLst i e1 e2 =
      ++ [emit OpCMP "" eax $ tmpVar i]
      ++ ["\tset" ++ opr ++ "\tal"]
      ++ ["\tmovzx\teax, al"]
-     , snd gen1 ++ snd gen2)
+    , snd gen1 ++ snd gen2)
     where gen1 = codeGenerateE (i+4) fnam (1:idLst) e1
           gen2 = codeGenerateE (i+4) fnam (2:idLst) e2
 
@@ -718,10 +907,32 @@ labelTagging :: ExternDclr -> ExternDclr
 labelTagging (Program l) =
     Program $ map labelTagging l
 labelTagging (NLFunc (FuncDefinition e1 e2 s) nl) =
-    TagedFunc (FuncDefinition e1 e2 . fst $ labeled) nl .
+    TagedFunc (FuncDefinition e1 e2 . labelTaggingBC [] . fst $ labeled) nl .
      labelModify 0 . labelSort . snd $ labeled
     where labeled = labelTaggingS s []
 labelTagging e = e
+
+--Break Continue
+labelTaggingBC :: [Integer] -> Statement -> Statement
+labelTaggingBC iLst (CompoundStt e s) =
+    (CompoundStt e $ labelTaggingBC iLst s)
+labelTaggingBC iLst (TagedIf i e s) =
+    (TagedIf i e $ labelTaggingBC iLst s)
+labelTaggingBC iLst (TagedIfElse i e s1 s2) =
+    (TagedIfElse i e (labelTaggingBC iLst  s1) $ labelTaggingBC iLst s2)
+labelTaggingBC _ (TagedWhile i e s) =
+    (TagedWhile i e $ labelTaggingBC i s)
+labelTaggingBC iLst (SttList l) =
+    (SttList $ map (labelTaggingBC iLst) l)
+labelTaggingBC [] (Break) =
+    error "Break out of While"
+labelTaggingBC iLst (Break) =
+    (TagedBreak iLst)
+labelTaggingBC [] (Continue) =
+    error "Continue out of While"
+labelTaggingBC iLst (Continue) =
+    (TagedContinue iLst)
+labelTaggingBC _  s = s
 
 labelTaggingS :: Statement -> [Integer] -> (Statement, [([Integer], Integer)])
 labelTaggingS (CompoundStt e s) i =
@@ -849,6 +1060,12 @@ makeSemanticTreeE (Minus e, st) =
 makeSemanticTreeE ((TwoOp op e1 e2), st) =
     makeSemanticTreeE_2op (TwoOp op) e1 e2 st
 
+makeSemanticTreeE ((Asgn e1 e2), st) =
+    makeSemanticTreeE_2op Asgn e1 e2 st
+
+makeSemanticTreeE ((CompoundAsgn op e1 e2), st) =
+    makeSemanticTreeE_2op (CompoundAsgn op) e1 e2 st
+
 makeSemanticTreeE ((CallFunc e1@(Ident s) e2@(ArguExprList l)), st) =
     case foundObj of
         Nothing -> makeCallFunc UnDefFun
@@ -879,6 +1096,13 @@ makeSemanticTreeE (Exprssn l, st) =
           makeTree e = fst $ makeSemanticTreeE (e, st)
           makeTreeSt :: Expr -> [Obj]
           makeTreeSt e = snd $ makeSemanticTreeE (e, st)
+
+makeSemanticTreeE (Ternary e1 e2 e3, st) =
+    (Ternary (fst expr1) (fst expr2) (fst expr3)
+    , st ++ snd expr1 ++ snd expr2 ++ snd expr3)
+    where expr1 = makeSemanticTreeE (e1, st)
+          expr2 = makeSemanticTreeE (e2, st)
+          expr3 = makeSemanticTreeE (e3, st)
 
 
 makeSemanticTreeE (expr, st) = (expr, st)
@@ -1011,51 +1235,114 @@ constEval e = e
 
 constEvalS :: Statement -> Statement
 constEvalS (SttList l) =
-    SttList $ map constEvalS l
+    SttList . filter isNotNon $ map constEvalS l
+    where isNotNon (Non) = False
+          isNotNon _ = True
 constEvalS (CompoundStt e s) =
     CompoundStt e $ constEvalS s
 constEvalS (If e s) =
     constIf . If evaledE $ constEvalS s
     where evaledE = constEvalE e
           constIf :: Statement -> Statement
+          constIf (If (Exprssn []) _) = error "condition of if is empty"
           constIf (If (Number 0) s) = Non
           constIf (If (Number _) s) = s
-          constIf e@(If _ s) = e
+          constIf s@(If _ _) = s
 constEvalS (IfElse e s1 s2) =
     constIfElse . IfElse evaledE (constEvalS s1) $ constEvalS s2
     where evaledE = constEvalE e
           constIfElse :: Statement -> Statement
+          constIfElse (IfElse (Exprssn []) _ _) = error "condition of if is empty"
           constIfElse (IfElse (Number 0) s1 s2) = s2
           constIfElse (IfElse (Number _) s1 s2) = s1
-          constIfElse e@(IfElse _ s1 s2) = e
+          constIfElse s@(IfElse _ _ _) = s
+constEvalS (While e s) =
+    constWhile . While evaledE $ constEvalS s
+    where evaledE = constEvalE e
+          constWhile :: Statement -> Statement
+          constWhile (While (Exprssn []) _) = error "condition of if is empty"
+          constWhile (While (Number 0) _) = Non
+          constWhile s@(While _ _) = s
 constEvalS (Return e) =
     Return $ constEvalE e
+constEvalS (Solo e) = Solo $ constEvalE e
+{--
+constEvalS (Solo e) = removeNonExec . Solo . constEvalE $ e
+    where removeNonExec s@(Solo (Asgn _ _)) = s
+          removeNonExec s@(Solo (CallFunc _ _)) = s
+          removeNonExec s = Non
+--}
 constEvalS s = s
 
 constEvalE :: Expr -> Expr
-constEvalE e@(TwoOp opr e1@(Number n1) e2@(Number n2)) =
-    case searchOp opr of
-        Just a -> Number $ a n1 n2
-        Nothing -> e
-constEvalE (TwoOp opr e1@(Ident _) e2@(Ident _)) =
-    TwoOp opr (constEvalE e1) (constEvalE e2)
-constEvalE (TwoOp opr e1@(Ident _) e2) =
-    TwoOp opr e1 $ constEvalE e2
-constEvalE (TwoOp opr e1 e2@(Ident _)) =
-    TwoOp opr (constEvalE e1) e2
+constEvalE (Ternary e1 e2 e3) =
+    ternaryEval $ Ternary (constEvalE e1) (constEvalE e2) (constEvalE e3)
+    where ternaryEval :: Expr -> Expr
+          ternaryEval (Ternary (Number 0) _ e) = e
+          ternaryEval (Ternary (Number _) e _) = e
+          ternaryEval e = e
 constEvalE (TwoOp opr e1 e2) =
-    constEvalE $ TwoOp opr c1 c2
+    numberEval $ TwoOp opr c1 c2
     where c1 = constEvalE e1
           c2 = constEvalE e2
+          numberEval :: Expr -> Expr
+          numberEval e@(TwoOp opr e1@(Number n1) e2@(Number n2)) =
+              case searchOp opr of
+                  Just a -> Number $ a n1 n2
+                  Nothing -> e
+          numberEval e@(TwoOp Eq e1@(Ident i1) e2@(Ident i2))
+              | i1 == i2  = Number 1
+              | otherwise = e
+          numberEval e@(TwoOp NE e1@(Ident i1) e2@(Ident i2))
+              | i1 == i2  = Number 0
+              | otherwise = e
+          numberEval e@(TwoOp Sub e1@(Ident i1) e2@(Ident i2))
+              | i1 == i2  = Number 0
+              | otherwise = e
+          numberEval e@(TwoOp Div e1@(Ident i1) e2@(Ident i2))
+              | i1 == i2  = Number 1
+              | otherwise = e
+          numberEval e@(TwoOp opr e1@(Ident _) e2@(Ident _)) = e
+          numberEval (TwoOp And e1@(Number _) e2) = numberEval (TwoOp And e2 e1)
+          numberEval (TwoOp And e1 (Number 0)) = Number 0
+          numberEval (TwoOp And e1 (Number _)) = numberEval e1
+          numberEval (TwoOp Or e1@(Number _) e2) = numberEval (TwoOp Or e2 e1)
+          numberEval (TwoOp Or e1 (Number 0)) = numberEval e1
+          numberEval (TwoOp Or e1 (Number _)) = Number 1
+          numberEval (TwoOp Add e1 (Number 0)) = numberEval e1
+          numberEval (TwoOp Add (Number 0) e2) = numberEval e2
+          numberEval (TwoOp Sub e1 (Number 0)) = numberEval e1
+          numberEval (TwoOp Sub (Number 0) e2) = numberEval $ Minus e2
+          numberEval (TwoOp Mul e1 (Number 0)) = Number 0
+          numberEval (TwoOp Mul (Number 0) e2) = Number 0
+          numberEval (TwoOp Mul e1 (Number 1)) = Number 1
+          numberEval (TwoOp Mul (Number 1) e2) = Number 1
+          numberEval (TwoOp Div e1 (Number 0)) = error "Zero Division"
+          numberEval (TwoOp Div (Number 0) e2) = Number 0
+          numberEval (TwoOp opr e1@(Ident _) e2) =
+              TwoOp opr e1 $ constEvalE e2
+          numberEval (TwoOp opr e1 e2@(Ident _)) = 
+              TwoOp opr (constEvalE e1) e2
+          numberEval e = e
 constEvalE (Minus e) =
     constMinus . Minus $ constEvalE e
     where constMinus :: Expr -> Expr
           constMinus (Minus (Number n)) = Number $ (-1) * n
           constMinus e = e
 constEvalE e@(Exprssn []) = e
---constEvalE (Exprssn l) =
---    where 
-
+constEvalE (Exprssn l) =
+    case length filtered of
+        0 -> evaledLast
+        _ -> Exprssn $ filtered ++ [evaledLast]
+    where isNotConst :: Expr -> Bool
+          isNotConst (Number _) = False
+          isNotConst _ = True
+          filtered = filter isNotConst $ init l
+          evaledLast = constEvalE $ last l
+constEvalE (CallFunc e (ArguExprList l)) =
+    (CallFunc e (ArguExprList $ map constEvalE l))
+constEvalE (Asgn e1 e2) =
+    Asgn e1 $ constEvalE e2
 constEvalE e = e
 
 

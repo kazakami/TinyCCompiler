@@ -44,7 +44,11 @@ statement-list:
 	(statement ( statement)*)?
 
 expression:
-	(assign-expr ( , assign-expr)*)?
+	(ternary-expr ( , ternary-expr)*)?
+
+ternary-expr:
+	assign-expr
+	expression ? expression : expression
 
 assign-expr:
 	logical-OR-expr
