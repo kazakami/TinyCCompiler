@@ -796,7 +796,7 @@ codeGenerateE i fnam idLst (TwoOp op e1 e2) =
 codeGenerateE i fnam idLst (CallFunc (Object o) (ArguExprList l)) =
     ((foldr (++) [] . map fst . reverse $ codeL)
       ++ ["\tcall\t" ++ name o]
-      ++ ["\tsub\tesp, " ++ show (length l * 4)]
+      ++ ["\tadd\tesp, " ++ show (length l * 4)]
     ,foldr (++) [] . map snd $ codeL)
     where codeL = map codeGen labeled
           codeGen :: (Expr, Integer) -> ([String], [Integer])
