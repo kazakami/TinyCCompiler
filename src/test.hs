@@ -67,7 +67,7 @@ prs parser str = case parse parser "TinyC" str of
     Right val -> show val
 
 putPrs :: (Show a) => Parser a -> String -> IO ()
-putPrs parser str = putStr $ prs parser str
+putPrs parser str = putStrLn $ prs parser str
 
 
 
@@ -315,16 +315,16 @@ instance Show ExternDclr where show = showExternDclr
 
 
 program :: Parser ExternDclr
-program = do p <- sepBy externDeclaration spaces
+program = do p <- many externDeclaration
              return $ Program p
 
 externDeclaration :: Parser ExternDclr
-externDeclaration = try (do spaces
-                            p <- declaration
+externDeclaration = try (do p <- declaration
+                            spaces
                             return (ExternDeclaration p))
-                     <|> try (do spaces
-                                 p <- funcDef
-                                 return (ExternFuncDec p))
+                     <|> (do p <- funcDef
+                             spaces
+                             return (ExternFuncDec p))
 
 blank :: Parser ()
 blank = try (do char ' '
@@ -736,13 +736,16 @@ codeGenerateEx (ExternDeclaration (Declaration (DeclaratorList l))) =
     map ((\ nam -> "\tCOMMON\t" ++ nam ++ " 4") . showVal) l
 codeGenerateEx (TagedFunc (FuncDefinition (Declarator name) (ParamDclrList l) s)
                           nl i) =
-    case stackOffset of {--
+    case stackOffset of
         0 ->
             ["\tGLOBAL\t" ++ name,
-             name ++ ":"]
+             name ++ ":\tpush\tebp",
+             "\tmov\tebp, esp"]
             ++ fst generatedS ++
             ["L" ++ name ++ "Ret:\t",
-            "\tret"] --}
+             "\tmov\tesp, ebp",
+             "\tpop\tebp",
+             "\tret"] 
         otherwise ->
             ["\tGLOBAL\t" ++ name,
              name ++ ":\tpush\tebp",
